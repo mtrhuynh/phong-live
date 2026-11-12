@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#170f08">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Phong Live</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<style>
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#170f08; }
+  #scene { position:fixed; inset:0; }
+  #scene canvas { display:block; }
+  /* Loading veil: a lotus spinner only — no text, no buttons (broadcast frame stays clean). */
+  #loading { position:fixed; inset:0; z-index:50; background:radial-gradient(circle at 50% 35%, #3a2410, #170f08 75%);
+    display:flex; align-items:center; justify-content:center; transition:opacity .8s; }
+  #loading .spin { font-size:44px; animation:sp 1.6s linear infinite; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+  #loading.done { opacity:0; pointer-events:none; }
+</style>
+</head>
+<body>
+<div id="scene"></div>
+<div id="loading"><div class="spin">🪷</div></div>
+
+<script src="xam-data.js"></script>
+<script>
+/* If the module below fails very early (bad cache, missing vendor file), never
+   leave the broadcast on a dead veil: after 25 s offer a plain reload tap area. */
+setTimeout(function () {
+  var ld = document.getElementById('loading');
+  if (ld && !ld.classList.contains('done')) {
+    ld.innerHTML = '<div class="spin">🪷</div>';
+    ld.addEventListener('click', function () { location.reload(); });
+  }
+}, 25000);
+if ('serviceWorker' in navigator) {
+  addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
+}
+</script>
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three.module.js",
+  "three/addons/": "./vendor/addons/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+/* =====================================================================
+   PHONG LIVE — a staged meditation hall for livestream.
+   Controlled from outside through window.PhongLive (see bottom).
+   The broadcast frame contains NO menu, buttons, instructions or
+   version text. Devotee name labels and the fortune board are part
+   of the scene itself.
+   Room axes: +Z toward the entrance/camera, Buddha at the -Z end.
+   Room size: 24 m wide (X) x 30 m deep (Z) x 12 m high (Y).
+   ===================================================================== */
+
+const ROOM = { W: 24, D: 30, H: 12 };
+
+/* ---------- renderer / scene / camera ---------- */
+const container = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.75));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x201105);
+scene.fog = new THREE.Fog(0x2a1608, 34, 85);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 300);
+camera.position.set(0, 8.8, 17.5);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+/* Orbit is a checking tool only: it stays OFF on the broadcast page and is
+   enabled with ?controls=1 (control.html embeds the page that way). */
+controls.enabled = new URLSearchParams(location.search).has('controls');
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.maxPolarAngle = Math.PI * 0.58;
+controls.minDistance = 3;
+controls.maxDistance = 40;
+controls.target.set(0, 2.0, -3);
+camera.lookAt(controls.target);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* ---------- lights ---------- */
+scene.add(new THREE.HemisphereLight(0xffe2b0, 0x5a3a20, 0.85));
+const sun = new THREE.DirectionalLight(0xffd9a0, 1.6);
+sun.position.set(10, 16, 10);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -18; sun.shadow.camera.right = 18;
+sun.shadow.camera.top = 20; sun.shadow.camera.bottom = -20;
+sun.shadow.camera.far = 60; sun.shadow.bias = -0.0004;
+scene.add(sun);
+const altarLight = new THREE.PointLight(0xffb45e, 60, 18, 1.8);
+altarLight.position.set(0, 4.2, -11.6); scene.add(altarLight);
+const frontSpot = new THREE.SpotLight(0xffd9a8, 350, 60, 0.62, 0.55, 1.4);
+frontSpot.position.set(0, 10.5, 13.5);
+frontSpot.target.position.set(0, 1.6, -9.2);
+scene.add(frontSpot, frontSpot.target);
+const fillLight = new THREE.PointLight(0xffc98a, 30, 30, 1.9);
+fillLight.position.set(0, 7, 6); scene.add(fillLight);
+
+/* ---------- small helpers ---------- */
+function canvasTexture(w, h, draw) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+const MAT = {
+  woodDark:  new THREE.MeshStandardMaterial({ color: 0x4a2c14, roughness: 0.85 }),
+  woodRed:   new THREE.MeshStandardMaterial({ color: 0x7e1f16, roughness: 0.62 }),
+  lacquer:   new THREE.MeshStandardMaterial({ color: 0x8c241a, roughness: 0.45 }),
+  gold:      new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: 0.32, metalness: 0.75 }),
+  goldSoft:  new THREE.MeshStandardMaterial({ color: 0xd9b45c, roughness: 0.5, metalness: 0.4 }),
+  bronze:    new THREE.MeshStandardMaterial({ color: 0x8a6a34, roughness: 0.45, metalness: 0.65 }),
+  stone:     new THREE.MeshStandardMaterial({ color: 0x9a8a76, roughness: 0.95 }),
+  cushion:   new THREE.MeshStandardMaterial({ color: 0xa02318, roughness: 0.8 }),
+};
+function box(w, h, d, mat, x, y, z, parent) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true;
+  (parent || scene).add(m); return m;
+}
+function cyl(rt, rb, h, mat, x, y, z, parent, seg) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg || 20), mat);
+  m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true;
+  (parent || scene).add(m); return m;
+}
+/* Load a GLB and normalise it the way the reference hall does it: measure the
+   bounding box, centre X/Z on the wrap origin, rest the base on y=0, scale so
+   the model is exactly targetH metres tall. If loading fails, drop a plain
+   stand-in block of the same height so the show can still run. */
+function loadFitted(url, targetH, onReady) {
+  const wrap = new THREE.Group();
+  new GLTFLoader().load(url, (gltf) => {
+    const m = gltf.scene;
+    m.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    const bb = new THREE.Box3().setFromObject(m);
+    const size = bb.getSize(new THREE.Vector3());
+    const ctr = bb.getCenter(new THREE.Vector3());
+    m.position.set(-ctr.x, -bb.min.y, -ctr.z);
+    const inner = new THREE.Group(); inner.add(m);
+    inner.scale.setScalar(targetH / size.y);
+    wrap.add(inner);
+    if (onReady) onReady(wrap, m);
+  }, undefined, () => {
+    const ph = box(targetH * 0.6, targetH, targetH * 0.6, MAT.goldSoft, 0, targetH / 2, 0, wrap);
+    ph.castShadow = true;
+    if (onReady) onReady(wrap, null);
+  });
+  return wrap;
+}
+/* Tween engine: every timed motion in the room runs through here. */
+const tweens = [];
+function tween(dur, update, done) {
+  return new Promise((resolve) => {
+    tweens.push({ t: 0, dur: Math.max(dur, 0.01), update, done: () => { if (done) done(); resolve(); } });
+  });
+}
+const easeIO = (k) => k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+function stepTweens(dt) {
+  for (let i = tweens.length - 1; i >= 0; i--) {
+    const tw = tweens[i];
+    tw.t += dt;
+    const k = Math.min(tw.t / tw.dur, 1);
+    tw.update(easeIO(k), k);
+    if (k >= 1) { tweens.splice(i, 1); tw.done(); }
+  }
+}
+function lerp(a, b, k) { return a + (b - a) * k; }
+
+/* ---------- floor, carpet, walls ---------- */
+const floorTex = canvasTexture(512, 512, (g, W, H) => {
+  g.fillStyle = '#6e4520'; g.fillRect(0, 0, W, H);
+  for (let r = 0; r < 8; r++) {
+    g.fillStyle = ['#754a22', '#68401c', '#7d5026'][r % 3];
+    g.fillRect(0, r * 64, W, 62);
+    g.strokeStyle = 'rgba(40,20,5,.55)'; g.lineWidth = 2;
+    g.strokeRect(-4, r * 64, W + 8, 64);
+    g.strokeStyle = 'rgba(60,32,8,.35)'; g.lineWidth = 1;
+    for (let i = 0; i < 7; i++) {
+      const y = r * 64 + 8 + Math.random() * 48;
+      g.beginPath(); g.moveTo(0, y); g.bezierCurveTo(W * .3, y + 3, W * .7, y - 3, W, y); g.stroke();
+    }
+    g.fillStyle = 'rgba(30,15,4,.6)'; g.fillRect(((r * 197) % W), r * 64, 3, 64);
+  }
+});
+floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping; floorTex.repeat.set(4, 5);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.W, ROOM.D),
+  new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.75 }));
+floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+
+const carpetTex = canvasTexture(512, 1024, (g, W, H) => {
+  g.fillStyle = '#8e1f14'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#9c2618'; g.fillRect(26, 0, W - 52, H);
+  g.strokeStyle = '#e3b34e'; g.lineWidth = 10; g.strokeRect(20, 20, W - 40, H - 40);
+  g.lineWidth = 3; g.strokeRect(48, 48, W - 96, H - 96);
+  g.fillStyle = 'rgba(227,179,78,.5)';
+  for (let i = 0; i < 6; i++) {
+    const cy = 110 + i * 165, cx = W / 2;
+    for (let p = 0; p < 8; p++) {
+      const a = (p / 8) * Math.PI * 2;
+      g.beginPath();
+      g.ellipse(cx + Math.cos(a) * 30, cy + Math.sin(a) * 30, 17, 9, a, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.beginPath(); g.arc(cx, cy, 13, 0, Math.PI * 2); g.fill();
+  }
+});
+const carpet = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 26),
+  new THREE.MeshStandardMaterial({ map: carpetTex, roughness: 0.92 }));
+carpet.rotation.x = -Math.PI / 2; carpet.position.set(0, 0.012, 2.2);
+carpet.receiveShadow = true; scene.add(carpet);
+
+const wallTex = canvasTexture(512, 512, (g, W, H) => {
+  g.fillStyle = '#54261a'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#5d2b1c'; g.fillRect(8, 8, W - 16, H - 16);
+  g.strokeStyle = 'rgba(217,180,92,.4)'; g.lineWidth = 3; g.strokeRect(14, 14, W - 28, H - 28);
+  g.strokeStyle = 'rgba(217,180,92,.18)'; g.lineWidth = 2;
+  for (let i = -4; i < 9; i++) {
+    g.beginPath(); g.moveTo(i * 64, 0); g.lineTo(i * 64 + H, H); g.stroke();
+    g.beginPath(); g.moveTo(i * 64 + H, 0); g.lineTo(i * 64, H); g.stroke();
+  }
+});
+wallTex.wrapS = wallTex.wrapT = THREE.RepeatWrapping;
+function wallPanel(w, h, x, y, z, ry, repX) {
+  const t = wallTex.clone(); t.needsUpdate = true; t.repeat.set(repX || 3, 2);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h),
+    new THREE.MeshStandardMaterial({ map: t, roughness: 0.9 }));
+  m.position.set(x, y, z); m.rotation.y = ry; m.receiveShadow = true; scene.add(m); return m;
+}
+/* Back wall flanks the temple shrine (the shrine fills the centre gap). */
+wallPanel(6.6, ROOM.H, -8.7, ROOM.H / 2, -15, 0, 2);
+wallPanel(6.6, ROOM.H, 8.7, ROOM.H / 2, -15, 0, 2);
+wallPanel(ROOM.D, ROOM.H, -12, ROOM.H / 2, 0, Math.PI / 2, 6);
+wallPanel(ROOM.D, ROOM.H, 12, ROOM.H / 2, 0, -Math.PI / 2, 6);
+/* Side paper windows: warm glow panels with lattice bars. */
+const paperMat = new THREE.MeshStandardMaterial({ color: 0xffd9a0, emissive: 0xffb45e, emissiveIntensity: 0.55, roughness: 0.9 });
+[-11.8, 11.8].forEach((x) => {
+  [-9, -3, 3, 9].forEach((z) => {
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 4.6), paperMat);
+    p.position.set(x, 5.4, z); p.rotation.y = x < 0 ? Math.PI / 2 : -Math.PI / 2; scene.add(p);
+    for (let i = -1; i <= 1; i++) {
+      const bar = box(0.06, 4.6, 0.08, MAT.woodDark, x + (x < 0 ? 0.06 : -0.06), 5.4, z + i * 1.1, scene);
+      bar.rotation.y = 0;
+    }
+  });
+});
+/* Ceiling + beams */
+const ceil = box(ROOM.W, 0.3, ROOM.D, MAT.woodDark, 0, ROOM.H + 0.15, 0, scene); ceil.castShadow = false;
+[-11, -5.5, 0, 5.5, 11].forEach((z) => box(ROOM.W, 0.55, 0.7, MAT.woodRed, 0, 11.2, z, scene));
+[-8, 0, 8].forEach((x) => box(0.7, 0.55, ROOM.D, MAT.woodRed, x, 11.55, 0, scene));
+box(ROOM.W, 0.8, 0.9, MAT.lacquer, 0, 9.6, -13.8, scene);
+box(ROOM.W, 0.8, 0.9, MAT.lacquer, 0, 10.15, 13.8, scene);
+
+/* Columns: two lacquered rows + altar pair. */
+function column(x, z, r) {
+  const g = new THREE.Group(); g.position.set(x, 0, z); scene.add(g);
+  cyl(r, r * 1.12, ROOM.H - 2.2, MAT.lacquer, 0, (ROOM.H - 2.2) / 2 + 0.5, 0, g, 18);
+  cyl(r * 1.35, r * 1.5, 0.5, MAT.stone, 0, 0.25, 0, g, 18);
+  [2.2, 6.4, 9.3].forEach((y) => {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(r * 1.04, 0.05, 8, 24), MAT.gold);
+    ring.rotation.x = Math.PI / 2; ring.position.y = y; g.add(ring);
+  });
+  return g;
+}
+[-10.8, 10.8].forEach((x) => [-12, -6, 0, 6, 12].forEach((z) => column(x, z, 0.46)));
+column(-6.6, -11.4, 0.4); column(6.6, -11.4, 0.4);
+/* Entrance frame (the front is an open stage wall: posts + beam, no wall). */
+column(-3.1, 15, 0.42); column(3.1, 15, 0.42);
+box(7.6, 0.7, 0.8, MAT.lacquer, 0, 9.95, 15, scene);
+column(-11.4, 15, 0.46); column(11.4, 15, 0.46);
+box(ROOM.W, 0.7, 0.8, MAT.woodRed, 0, 10.6, 15, scene);
+
+/* Lanterns: squashed glowing spheres, gold caps, red tassels. Only two carry
+   real point lights; the rest are emissive (keeps phones/stream PCs smooth). */
+const lanternFlames = [];
+function lantern(x, y, z, withLight) {
+  const g = new THREE.Group(); g.position.set(x, y, z); scene.add(g);
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.42, 18, 14),
+    new THREE.MeshStandardMaterial({ color: 0xd43a24, emissive: 0xff7a30, emissiveIntensity: 0.85, roughness: 0.6 }));
+  body.scale.y = 0.82; g.add(body);
+  cyl(0.16, 0.2, 0.1, MAT.gold, 0, 0.4, 0, g, 10);
+  cyl(0.05, 0.09, 0.34, MAT.woodRed, 0, -0.52, 0, g, 8);
+  const cord = cyl(0.016, 0.016, ROOM.H - y - 0.4, MAT.woodDark, 0, (ROOM.H - y) / 2 + 0.2, 0, g, 6);
+  cord.castShadow = false;
+  if (withLight) { const l = new THREE.PointLight(0xff9a4e, 14, 11, 1.8); g.add(l); lanternFlames.push(l); }
+  return g;
+}
+[-7.4, 7.4].forEach((x) => [-10, -4, 2, 8].forEach((z, i) => lantern(x, 8.1, z, i === 1)));
+[0].forEach((x) => [-7, 1, 9].forEach((z) => lantern(x, 8.6, z, false)));
+lantern(-3.1, 7.9, 14.6, false); lantern(3.1, 7.9, 14.6, false);
+
+/* ---------- altar end: temple shrine, tiers, Buddha, burner ---------- */
+/* Temple model used as the shrine shell behind the Buddha (front faces +Z,
+   as in the reference hall). Rebuilt hall around it is wider and airier. */
+const temple = loadFitted('models/temple.glb', 7.4);
+temple.position.set(0, 0, -17.65);
+scene.add(temple);
+
+/* Altar tiers + Buddha pedestal. Statue + pedestal top out at ~6.6 m.
+   The whole altar stack sits back so the carpet in front of it stays
+   clear: the bow point (0, 0, -9.6) is on the carpet, off the platform. */
+box(16, 0.45, 6.2, MAT.stone, 0, 0.225, -13.0, scene);
+box(12.5, 0.45, 4.8, MAT.woodRed, 0, 0.675, -13.5, scene);
+box(16.6, 0.14, 5.6, MAT.goldSoft, 0, 0.07, -13.2, scene).castShadow = false;
+const pedestal = new THREE.Group(); pedestal.position.set(0, 0.9, -13.7); scene.add(pedestal);
+box(4.8, 0.5, 3.6, MAT.woodRed, 0, 0.25, 0, pedestal);
+box(4.0, 0.5, 3.0, MAT.lacquer, 0, 0.75, 0, pedestal);
+box(3.4, 0.32, 2.6, MAT.goldSoft, 0, 1.16, 0, pedestal);
+/* Steps down the front of the tiers, centre. */
+box(3.2, 0.22, 0.8, MAT.stone, 0, 0.56, -11.0, scene);
+box(3.2, 0.22, 0.8, MAT.stone, 0, 0.11, -10.5, scene);
+
+const buddha = loadFitted('models/buddha.glb', 4.35);
+buddha.position.set(0, 2.22, -13.7);
+scene.add(buddha);
+/* Golden halo disc behind the Buddha, in front of the shrine face. */
+const halo = new THREE.Group(); halo.position.set(0, 4.7, -14.45); scene.add(halo);
+const haloDisc = new THREE.Mesh(new THREE.CircleGeometry(3.1, 40),
+  new THREE.MeshStandardMaterial({ color: 0xe8b64c, emissive: 0xc98f2a, emissiveIntensity: 0.5, roughness: 0.4, metalness: 0.5, side: THREE.DoubleSide }));
+halo.add(haloDisc);
+const haloRing = new THREE.Mesh(new THREE.TorusGeometry(3.1, 0.09, 10, 48), MAT.gold);
+halo.add(haloRing);
+const haloRing2 = new THREE.Mesh(new THREE.TorusGeometry(2.45, 0.045, 8, 44), MAT.goldSoft);
+halo.add(haloRing2);
+
+/* Bronze incense burner on the terrace, centre, before the Buddha. */
+const burner = loadFitted('models/burner.glb', 1.5);
+burner.position.set(0, 0.45, -10.75);
+scene.add(burner);
+/* Candle stands + offering bowls flanking the burner. */
+const flameMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
+[-1.9, 1.9].forEach((x) => {
+  cyl(0.05, 0.07, 1.05, MAT.bronze, x, 0.98, -11.3, scene, 10);
+  cyl(0.015, 0.015, 0.34, new THREE.MeshStandardMaterial({ color: 0xf3e3c2, roughness: 0.6 }), x, 1.67, -11.3, scene, 6);
+  const fl = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 8), flameMat);
+  fl.scale.y = 1.9; fl.position.set(x, 1.92, -11.3); scene.add(fl);
+});
+[-3.4, 3.4].forEach((x) => {
+  const bowl = new THREE.Mesh(new THREE.SphereGeometry(0.34, 16, 10, 0, Math.PI * 2, Math.PI * 0.5, Math.PI * 0.5), MAT.bronze);
+  bowl.position.set(x, 1.24, -12.2); bowl.castShadow = true; scene.add(bowl);
+  const fruitMat = new THREE.MeshStandardMaterial({ color: 0xe08a2e, roughness: 0.55 });
+  [[-0.12, 0], [0.12, 0.04], [0, 0.14]].forEach((o) => {
+    const f = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 8), fruitMat);
+    f.position.set(x + o[0], 1.3, -12.2 + o[1]); f.castShadow = true; scene.add(f);
+  });
+});
+
+/* ---------- seats: 15 cushions in TWO side blocks, codes G01..G15 ----------
+   v0.1.1: NO middle column — the central red carpet is a completely clear
+   processional axis from the door to the altar (devotees walk it to bow).
+   Numbering: left block first (rows from the Buddha toward the door,
+   inner seat then outer seat), then the right block the same way.
+   Left block has 8 seats (4 rows x 2), right block 7 (the rear-outer
+   corner seat is omitted to keep the total at 15). Seat order in this
+   array is also the fill order for addPhatTu (lowest free code first). */
+const SEAT_ROWS_Z = [-5.4, -2.8, -0.2, 2.4];
+const SEAT_POS = [];
+SEAT_ROWS_Z.forEach((z) => { SEAT_POS.push([-4.7, z], [-7.3, z]); });        /* left:  G01..G08 */
+SEAT_ROWS_Z.forEach((z, r) => { SEAT_POS.push([4.7, z]); if (r < 3) SEAT_POS.push([7.3, z]); }); /* right: G09..G15 */
+const seats = [];
+SEAT_POS.forEach((p, i) => {
+  const code = 'G' + String(i + 1).padStart(2, '0');
+  const x = p[0], z = p[1];
+  const g = new THREE.Group(); g.position.set(x, 0, z); scene.add(g);
+  const base = cyl(0.56, 0.6, 0.17, MAT.cushion, 0, 0.085, 0, g, 24);
+  base.receiveShadow = true;
+  const trim = new THREE.Mesh(new THREE.TorusGeometry(0.57, 0.028, 8, 28), MAT.goldSoft);
+  trim.rotation.x = Math.PI / 2; trim.position.y = 0.16; g.add(trim);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.68, 0.86, 32),
+    new THREE.MeshBasicMaterial({ color: 0xffcf5e, transparent: true, opacity: 0, side: THREE.DoubleSide }));
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.02; g.add(ring);
+  seats.push({ code, x, z, actor: null, ring });
+});
+/* The bow point: centre of the carpet in front of the altar platform,
+   inside the stream zone — the key moment of the live happens here. */
+const BOW_POINT = new THREE.Vector3(0, 0, -9.6);
+
+/* ---------- fortune (xin xam) anchor ----------
+   XAM_ANCHOR — the fixed mounting point for the fortune-stick set.
+   Contract for swapping in a new model later, NO code change needed:
+   the loader auto-fits whatever sits at models/xam-set.glb into this box.
+     footprint (table top): 1.20 m (X) x 0.90 m (Z)
+     table top height:      0.55 m
+     model height:          0.75 m (hard cap 1.00 m)
+     model origin:          base centre, front facing +Z
+     anchor position:       (2.7, 0, -7.3) — right of the centre axis,
+                            in front of the altar, inside the stream zone.
+   The stand point for the devotee is 0.95 m south of the anchor. */
+const XAM_ANCHOR = {
+  pos: new THREE.Vector3(2.7, 0, -7.3),
+  footprint: { w: 1.2, d: 0.9 },
+  tableTopY: 0.55,
+  modelH: 0.75,
+  standPoint: new THREE.Vector3(2.7, 0, -6.3),
+};
+const xamAnchor = new THREE.Group();
+xamAnchor.position.copy(XAM_ANCHOR.pos); scene.add(xamAnchor);
+{ /* low wooden table the set stands on */
+  box(XAM_ANCHOR.footprint.w, 0.07, XAM_ANCHOR.footprint.d, MAT.woodDark, 0, XAM_ANCHOR.tableTopY - 0.035, 0, xamAnchor);
+  [[-0.5, -0.34], [0.5, -0.34], [-0.5, 0.34], [0.5, 0.34]].forEach((o) =>
+    box(0.09, XAM_ANCHOR.tableTopY - 0.07, 0.09, MAT.woodDark, o[0], (XAM_ANCHOR.tableTopY - 0.07) / 2, o[1], xamAnchor));
+}
+const xamSet = loadFitted('models/xam-set.glb', XAM_ANCHOR.modelH);
+xamSet.position.y = XAM_ANCHOR.tableTopY;
+xamAnchor.add(xamSet);
+/* One loose stick used for the draw animation (rises out of the set). */
+const drawStick = cyl(0.02, 0.02, 0.62, new THREE.MeshStandardMaterial({ color: 0xd8b878, roughness: 0.7 }), 0, 0, 0, xamAnchor, 6);
+drawStick.position.set(0, XAM_ANCHOR.tableTopY + 0.3, 0); drawStick.visible = false;
+
+/* Fortune board: a small framed board standing beside the anchor, inside
+   the scene. Blank (lotus motif only) until a stick is drawn, then it
+   shows the stick number in English-style "No. n" plus the stick name
+   exactly as stored in xam-data.js. */
+const boardCanvas = document.createElement('canvas'); boardCanvas.width = 640; boardCanvas.height = 400;
+const boardTex = new THREE.CanvasTexture(boardCanvas); boardTex.colorSpace = THREE.SRGBColorSpace;
+function drawBoard(que) {
+  const g = boardCanvas.getContext('2d');
+  g.fillStyle = '#241407'; g.fillRect(0, 0, 640, 400);
+  g.strokeStyle = '#e8b64c'; g.lineWidth = 10; g.strokeRect(14, 14, 612, 372);
+  if (!que) {
+    g.fillStyle = 'rgba(232,182,76,.75)'; g.font = '120px serif'; g.textAlign = 'center';
+    g.fillText('🪷', 320, 245);
+  } else {
+    g.fillStyle = '#f5c95e'; g.textAlign = 'center';
+    g.font = 'bold 64px Arial, sans-serif';
+    g.fillText('No. ' + que[0], 320, 105);
+    g.font = 'bold ' + (que[1].length > 16 ? 40 : 50) + 'px Arial, sans-serif';
+    g.fillStyle = '#f0d9a0';
+    g.fillText(que[1], 320, 195);
+    g.font = '38px Arial, sans-serif'; g.fillStyle = '#d9b45c';
+    g.fillText(que[2], 320, 268);
+    g.font = '30px Arial, sans-serif'; g.fillStyle = 'rgba(240,217,160,.75)';
+    g.fillText('🪷', 320, 340);
+  }
+  boardTex.needsUpdate = true;
+}
+drawBoard(null);
+const board = new THREE.Group(); board.position.set(4.55, 0, -7.55); board.rotation.y = -0.42; scene.add(board);
+box(1.86, 1.22, 0.1, MAT.woodDark, 0, 1.25, 0, board);
+const boardFace = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 1.06),
+  new THREE.MeshStandardMaterial({ map: boardTex, roughness: 0.7 }));
+boardFace.position.set(0, 1.25, 0.06); board.add(boardFace);
+[-0.7, 0.7].forEach((x) => { const leg = box(0.1, 1.0, 0.1, MAT.woodDark, x, 0.32, -0.12, board); leg.rotation.x = 0.3; });
+
+/* Stream zone: the vertical 9:16 broadcast area. Buddha + pedestal, the
+   fortune anchor and the first two cushion rows all live inside it, and
+   every main action (entrances along the side aisles, xin xam) is routed
+   through it. Logical bounds only — nothing is drawn on the broadcast. */
+const STREAM_ZONE = { xMin: -5.7, xMax: 5.7, zMin: -14.8, zMax: -1.1 };
+
+/* ---------- devotees (phat tu) ---------- */
+let monkProto = null;
+const monkWaiters = [];
+loadFitted('models/monk2.glb', 1.5, (wrap) => { monkProto = wrap; monkWaiters.splice(0).forEach((fn) => fn()); });
+
+const ROBE_TINTS = [0xdcebfb, 0xf5d7c4, 0xc9d9f2, 0xf7e3b0, 0xe6d5f0, 0xd5ecd9, 0xffd9d0];
+const actors = new Map(); /* name -> actor */
+let lastQue = null;       /* { soQue, tenQue, nguoi } */
+let nguoiDangLay = null;  /* name of the ONE devotee currently out bowing/waiting, or null */
+let deepMeditation = false;
+let breathFactor = 1, breathTarget = 1;
+
+function nameSprite(name) {
+  const tex = canvasTexture(512, 128, (g, W, H) => {
+    g.clearRect(0, 0, W, H);
+    g.font = 'bold ' + (name.length > 14 ? 44 : 56) + 'px Arial, "Helvetica Neue", sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.lineWidth = 10; g.strokeStyle = 'rgba(30,16,4,.85)';
+    g.strokeText(name, W / 2, H / 2);
+    g.fillStyle = '#ffe9b8'; g.fillText(name, W / 2, H / 2);
+  });
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+  sp.scale.set(1.9, 0.475, 1);
+  return sp;
+}
+function makeActor(name, seat) {
+  const group = new THREE.Group(); scene.add(group);
+  const body = new THREE.Group(); group.add(body);
+  const actor = {
+    name, seat, group, body, busy: false, seated: false, dead: false,
+    phase: Math.random() * Math.PI * 2, tint: ROBE_TINTS[seats.indexOf(seat) % ROBE_TINTS.length],
+    tag: nameSprite(name),
+  };
+  actor.tag.position.y = 1.78; group.add(actor.tag);
+  const fill = () => {
+    if (actor.dead || !monkProto) return;
+    const inst = monkProto.clone(true);
+    inst.traverse((o) => {
+      if (o.isMesh) {
+        o.castShadow = true;
+        if (o.material) {
+          o.material = o.material.clone();
+          if (o.geometry && o.geometry.getAttribute('color')) o.material.vertexColors = true;
+          o.material.roughness = 0.85;
+          if (o.material.color) o.material.color.multiply(new THREE.Color(actor.tint));
+        }
+      }
+    });
+    body.add(inst);
+  };
+  if (monkProto) fill(); else monkWaiters.push(fill);
+  return actor;
+}
+function faceToward(actor, dx, dz, dur) {
+  const from = actor.group.rotation.y;
+  let to = Math.atan2(dx, dz);
+  while (to - from > Math.PI) to -= Math.PI * 2;
+  while (from - to > Math.PI) to += Math.PI * 2;
+  return tween(dur || 0.35, (e) => { actor.group.rotation.y = lerp(from, to, e); });
+}
+/* Walk a list of floor waypoints at a steady pace, with a gentle bob. */
+async function walkPath(actor, points, speed) {
+  for (const p of points) {
+    const from = actor.group.position.clone();
+    const to = new THREE.Vector3(p[0], 0, p[1]);
+    const dist = from.distanceTo(to);
+    if (dist < 0.02) continue;
+    await faceToward(actor, to.x - from.x, to.z - from.z, 0.3);
+    await tween(dist / (speed || 2.1), (e, raw) => {
+      actor.group.position.lerpVectors(from, to, e);
+      actor.body.position.y = Math.abs(Math.sin(raw * Math.PI * Math.max(2, dist * 2.2))) * 0.045;
+      actor.body.rotation.z = Math.sin(raw * Math.PI * Math.max(2, dist * 2.2)) * 0.03;
+    });
+    actor.body.position.y = 0; actor.body.rotation.z = 0;
+  }
+}
+function standUp(actor) {
+  const sy = actor.body.scale.y, ty = actor.tag.position.y;
+  return tween(1.15, (e) => {
+    actor.body.scale.y = lerp(sy, 1, e);
+    actor.tag.position.y = lerp(ty, 1.78, e);
+  }).then(() => { actor.seated = false; });
+}
+function sitDown(actor) {
+  const sy = actor.body.scale.y, ty = actor.tag.position.y;
+  return tween(1.15, (e) => {
+    actor.body.scale.y = lerp(sy, 0.68, e);
+    actor.tag.position.y = lerp(ty, 1.28, e);
+  }).then(() => { actor.seated = true; });
+}
+function kneel(actor, down) {
+  const sy = actor.body.scale.y;
+  return tween(1.1, (e) => { actor.body.scale.y = lerp(sy, down ? 0.5 : 1, e); });
+}
+function seatEntryPoints(seat) { return [seat.x, seat.z + 1.15]; }
+function aisleX(seat) { return seat.x >= 0 ? 9.2 : -9.2; }
+
+async function doAddPhatTu(name) {
+  name = String(name || '').trim();
+  if (!name) return { ok: false, loi: 'thieu ten' };
+  if (actors.has(name)) return { ok: false, loi: 'da co trong phong', ghe: actors.get(name).seat.code };
+  const seat = seats.find((s) => !s.actor);
+  if (!seat) return { ok: false, loi: 'het ghe' };
+  const actor = makeActor(name, seat);
+  seat.actor = actor; actor.busy = true; actors.set(name, actor);
+  actor.group.position.set(0, 0, 15.9);
+  actor.group.rotation.y = Math.PI;
+  await walkPath(actor, [[aisleX(seat), 13.8], [aisleX(seat), seat.z + 1.15], seatEntryPoints(seat), [seat.x, seat.z]], 2.2);
+  await faceToward(actor, 0, -1, 0.4);
+  actor.group.position.y = 0.16;
+  await sitDown(actor);
+  actor.busy = false;
+  return { ok: true, ghe: seat.code };
+}
+async function doRemovePhatTu(name) {
+  const actor = actors.get(String(name || '').trim());
+  if (!actor) return { ok: false, loi: 'khong tim thay' };
+  if (nguoiDangLay === actor.name) return { ok: false, loi: 'dang o ngoai' };
+  if (actor.busy) return { ok: false, loi: 'dang ban' };
+  actor.busy = true;
+  const seat = actor.seat;
+  actor.group.position.y = 0;
+  await standUp(actor);
+  await walkPath(actor, [seatEntryPoints(seat), [aisleX(seat), seat.z + 1.15], [aisleX(seat), 13.8], [0, 15.9]], 2.2);
+  actor.dead = true;
+  scene.remove(actor.group);
+  seat.actor = null; actors.delete(actor.name);
+  return { ok: true, ghe: seat.code };
+}
+/* Walk back from wherever the devotee is standing out (bow point or the
+   fortune anchor) to their own seat, along the central axis, and sit. */
+async function returnToSeat(actor) {
+  const seat = actor.seat;
+  await walkPath(actor, [[0, seat.z + 1.15], seatEntryPoints(seat), [seat.x, seat.z]], 2.0);
+  await faceToward(actor, 0, -1, 0.4);
+  actor.group.position.y = 0.16;
+  await sitDown(actor);
+}
+/* raLay: stand, walk the central axis to the bow point, bow 3 times
+   (kneel held steady; only the upper body bows — no height squash
+   between beats), stand again and WAIT at the bow point. */
+async function doRaLay(name) {
+  const actor = actors.get(String(name || '').trim());
+  if (!actor) return { ok: false, loi: 'khong tim thay' };
+  if (nguoiDangLay) return { ok: false, loi: 'co nguoi dang lay' };
+  if (actor.busy || !actor.seated) return { ok: false, loi: 'dang ban' };
+  nguoiDangLay = actor.name;
+  actor.busy = true; actor.out = 'dang lay';
+  const seat = actor.seat;
+  actor.group.position.y = 0;
+  await standUp(actor);
+  await walkPath(actor, [seatEntryPoints(seat), [0, seat.z + 1.15], [0, BOW_POINT.z + 1.05], [BOW_POINT.x, BOW_POINT.z]], 2.0);
+  await faceToward(actor, 0, -1, 0.4);
+  await kneel(actor, true); /* into the kneel and HOLD it through all 3 bows */
+  for (let i = 0; i < 3; i++) {
+    await tween(0.75, (e) => { actor.body.rotation.x = 0.55 * e; });
+    await tween(0.95, (e) => { actor.body.rotation.x = 0.55 * (1 - e); });
+    if (i < 2) await tween(0.35, () => {});
+  }
+  actor.body.rotation.x = 0;
+  await kneel(actor, false); /* rise back to standing, still at the bow point */
+  actor.out = 'dang cho';
+  actor.busy = false;
+  return { ok: true };
+}
+/* veCho: the waiting devotee walks back along the axis and sits down. */
+async function doVeCho(name) {
+  const actor = actors.get(String(name || '').trim());
+  if (!actor) return { ok: false, loi: 'khong tim thay' };
+  if (nguoiDangLay !== actor.name || actor.out !== 'dang cho') return { ok: false, loi: 'khong dang o ngoai' };
+  actor.busy = true;
+  await returnToSeat(actor);
+  nguoiDangLay = null; actor.out = null; actor.busy = false;
+  return { ok: true };
+}
+/* xinXam v0.1.1: ONLY the devotee currently waiting at the bow point may
+   draw. Same ritual as v0.1.0 at the anchor; afterwards the devotee
+   returns to their seat by the central axis on their own. */
+async function doXinXam(name) {
+  const actor = actors.get(String(name || '').trim());
+  if (!actor) return { ok: false, loi: 'khong tim thay' };
+  if (nguoiDangLay !== actor.name || actor.out !== 'dang cho') return { ok: false, loi: 'chua ra lay' };
+  if (!window.XAM_DATA || !window.XAM_DATA.length) return { ok: false, loi: 'chua co du lieu xam' };
+  actor.busy = true; actor.out = 'dang xin xam';
+  const que = window.XAM_DATA[Math.floor(Math.random() * window.XAM_DATA.length)];
+  /* bow point -> fortune anchor stand point (inside the stream zone) */
+  await walkPath(actor, [[0, XAM_ANCHOR.standPoint.z], [XAM_ANCHOR.standPoint.x, XAM_ANCHOR.standPoint.z]], 2.0);
+  await faceToward(actor, 0, -1, 0.4);
+  /* kneel, shake the tube ~4 s */
+  await kneel(actor, true);
+  await tween(4, (e, raw) => {
+    xamAnchor.rotation.z = Math.sin(raw * Math.PI * 10) * 0.10 * Math.sin(Math.min(raw * 3, 1) * Math.PI * 0.5);
+    xamAnchor.rotation.x = Math.cos(raw * Math.PI * 8) * 0.05;
+  });
+  xamAnchor.rotation.z = 0; xamAnchor.rotation.x = 0;
+  /* draw one stick, show number + name on the board beside the anchor */
+  drawStick.visible = true;
+  await tween(1.8, (e) => {
+    drawStick.position.y = XAM_ANCHOR.tableTopY + 0.3 + e * 0.38;
+    drawStick.rotation.z = e * 0.5;
+  });
+  drawBoard(que);
+  lastQue = { soQue: que[0], tenQue: que[1], nguoi: actor.name };
+  await tween(3.2, () => {}); /* a quiet beat while the board is read */
+  drawStick.visible = false; drawStick.rotation.z = 0;
+  /* stand, return along the central axis, sit down — turn over */
+  await kneel(actor, false);
+  await returnToSeat(actor);
+  nguoiDangLay = null; actor.out = null; actor.busy = false;
+  return { soQue: que[0], tenQue: que[1] };
+}
+function doTrangThai() {
+  return {
+    ghe: seats.map((s) => ({ ghe: s.code, nguoi: s.actor ? s.actor.name : null })),
+    nguoiDangLay: nguoiDangLay,
+    queGanNhat: lastQue,
+    thienNhom: deepMeditation,
+    vungPhat: STREAM_ZONE,
+  };
+}
+
+/* ---------- camera presets ---------- */
+let camTween = null;
+function flyCamera(pos, tgt, fov) {
+  const p0 = camera.position.clone(), t0 = controls.target.clone(), f0 = camera.fov;
+  const p1 = new THREE.Vector3(pos[0], pos[1], pos[2]), t1 = new THREE.Vector3(tgt[0], tgt[1], tgt[2]);
+  if (camTween) camTween.dead = true;
+  const tw = { dead: false };
+  camTween = tw;
+  tween(1.6, (e) => {
+    if (tw.dead) return;
+    camera.position.lerpVectors(p0, p1, e);
+    controls.target.lerpVectors(t0, t1, e);
+    camera.fov = lerp(f0, fov, e); camera.updateProjectionMatrix();
+  });
+}
+function cameraToanCanh() { flyCamera([0, 8.8, 17.5], [0, 2.0, -3], 50); }
+function cameraVungPhat() { flyCamera([0, 3.7, 12.3], [0, 2.3, -6.6], 63); }
+
+/* ---------- public API for the AI controller ---------- */
+const readyCallbacks = [];
+window.PhongLive = {
+  addPhatTu: (ten) => doAddPhatTu(ten),
+  removePhatTu: (ten) => doRemovePhatTu(ten),
+  raLay: (ten) => doRaLay(ten),
+  xinXam: (ten) => doXinXam(ten),
+  veCho: (ten) => doVeCho(ten),
+  thienNhom: () => { deepMeditation = true; breathTarget = 0.45; return { ok: true }; },
+  ngungThien: () => { deepMeditation = false; breathTarget = 1; return { ok: true }; },
+  trangThai: () => doTrangThai(),
+  cameraToanCanh, cameraVungPhat,
+  ready: new Promise((res) => readyCallbacks.push(res)),
+};
+/* Debug/diagnostic handle for whoever verifies the build (not a UI). */
+window.__plDebug = { scene, camera, renderer, THREE };
+/* The same commands over BroadcastChannel / postMessage, so a separate
+   control tab can drive a broadcast tab that shows only the scene. */
+function runCommand(cmd, args) {
+  const api = window.PhongLive;
+  if (typeof api[cmd] === 'function') return Promise.resolve(api[cmd].apply(null, args || []));
+  return Promise.resolve({ ok: false, loi: 'lenh khong ton tai' });
+}
+try {
+  const bc = new BroadcastChannel('phong-live-v0.1');
+  bc.onmessage = (ev) => {
+    const d = ev.data || {};
+    if (!d.cmd) return;
+    runCommand(d.cmd, d.args).then((result) => { try { bc.postMessage({ id: d.id, result }); } catch (e) {} });
+  };
+} catch (e) {}
+addEventListener('message', (ev) => {
+  const d = ev.data || {};
+  if (!d.cmd || !window.PhongLive[d.cmd]) return;
+  runCommand(d.cmd, d.args).then((result) => {
+    if (ev.source) { try { ev.source.postMessage({ id: d.id, result }, '*'); } catch (e) {} }
+  });
+});
+
+/* ---------- seed congregation: six devotees already seated ----------
+   First two rows of each side block: G01, G02, G03 (left) + G09, G10, G11 (right). */
+['Minh An', 'Thanh Tam', 'Dieu Huong', 'Phuc Lam', 'Tue Nhi', 'An Lac'].forEach((name, i) => {
+  const seat = seats[[0, 1, 2, 8, 9, 10][i]];
+  const actor = makeActor(name, seat);
+  seat.actor = actor; actors.set(name, actor);
+  actor.group.position.set(seat.x, 0.16, seat.z);
+  actor.group.rotation.y = Math.PI;
+  actor.body.scale.y = 0.68; actor.tag.position.y = 1.28; actor.seated = true;
+});
+
+/* ---------- main loop: breathing, sway, glow, lantern flicker ---------- */
+const clock = new THREE.Clock();
+let elapsed = 0;
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.1);
+  elapsed += dt;
+  stepTweens(dt);
+  breathFactor = lerp(breathFactor, breathTarget, dt * 1.5);
+  for (const actor of actors.values()) {
+    if (actor.busy) continue;
+    if (actor.seated) {
+      const b = Math.sin(elapsed * 1.15 * breathFactor + actor.phase);
+      actor.body.scale.y = 0.68 * (1 + b * 0.018);
+      actor.body.rotation.z = Math.sin(elapsed * 0.5 * breathFactor + actor.phase) * 0.008;
+    } else if (actor.out === 'dang cho') {
+      /* waiting at the bow point: a barely-there standing sway */
+      actor.body.rotation.z = Math.sin(elapsed * 0.6 + actor.phase) * 0.006;
+    }
+  }
+  for (const s of seats) {
+    const target = deepMeditation && s.actor ? 0.5 : 0;
+    s.ring.material.opacity = lerp(s.ring.material.opacity, target, dt * 2);
+  }
+  lanternFlames.forEach((l, i) => { l.intensity = 13 + Math.sin(elapsed * 7 + i * 2.4) * 2.2; });
+  altarLight.intensity = 58 + Math.sin(elapsed * 3.1) * 5;
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+/* Lift the loading veil once the monk prototype has landed (or after a
+   grace period — a placeholder body keeps the room usable regardless). */
+let veilLifted = false;
+function liftVeil() {
+  if (veilLifted) return; veilLifted = true;
+  document.getElementById('loading').classList.add('done');
+  readyCallbacks.splice(0).forEach((res) => res(true));
+}
+monkWaiters.push(liftVeil);
+setTimeout(liftVeil, 12000);
+</script>
+</body>
+</html>

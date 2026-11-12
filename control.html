@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phong Live — Bảng điều khiển thử lệnh</title>
+<style>
+  body { margin:0; font-family:Arial, "Helvetica Neue", sans-serif; background:#1c1108; color:#f0d9a0; }
+  header { padding:14px 18px 6px; }
+  header h1 { font-size:19px; margin:0 0 4px; color:#f5c95e; }
+  header p { margin:0; font-size:13px; color:#cbb27f; }
+  main { display:flex; flex-wrap:wrap; gap:16px; padding:14px 18px 22px; align-items:flex-start; }
+  #previewWrap { flex:1 1 520px; min-width:300px; }
+  #previewWrap .bar { display:flex; gap:8px; margin-bottom:8px; align-items:center; font-size:13px; }
+  iframe { width:100%; height:56vh; min-height:340px; border:2px solid #7a5a22; border-radius:10px; background:#170f08; }
+  iframe.portrait { width:300px; height:533px; }
+  #panel { flex:0 1 340px; min-width:280px; background:#2a1a0c; border:1px solid #7a5a22; border-radius:10px; padding:14px; }
+  #panel label { font-size:13px; color:#cbb27f; display:block; margin:10px 0 4px; }
+  #panel input[type=text] { width:100%; box-sizing:border-box; padding:9px 10px; border-radius:8px; border:1px solid #7a5a22; background:#170f08; color:#ffe9b8; font-size:15px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
+  button { padding:10px 8px; border-radius:8px; border:0; background:#c9a45c; color:#241708; font-weight:700; font-size:14px; cursor:pointer; }
+  button:hover { background:#e3b34e; }
+  button.alt { background:#5d4020; color:#f0d9a0; }
+  #log { margin-top:12px; background:#170f08; border:1px solid #55401c; border-radius:8px; padding:10px; font-size:12.5px;
+    white-space:pre-wrap; word-break:break-word; max-height:260px; overflow:auto; min-height:90px; }
+  .chk { display:flex; gap:8px; align-items:center; margin-top:12px; font-size:13px; color:#cbb27f; }
+  a { color:#f5c95e; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Phòng Live — bảng điều khiển thử lệnh</h1>
+  <p>Trang này nằm NGOÀI khung phát sóng. Màn hình xem trước bên dưới là chính trang phát (index.html) nhúng vào; các nút gọi thẳng <b>window.PhongLive</b> của trang đó.</p>
+</header>
+<main>
+  <div id="previewWrap">
+    <div class="bar">
+      <span>Xem trước:</span>
+      <button class="alt" id="btnLand" style="padding:6px 12px">Khung ngang</button>
+      <button class="alt" id="btnPort" style="padding:6px 12px">Khung dọc 9:16</button>
+      <a href="index.html" target="_blank" rel="noopener">Mở trang phát sóng riêng ↗</a>
+    </div>
+    <iframe id="preview" src="index.html?controls=1" title="Phong Live preview"></iframe>
+  </div>
+
+  <div id="panel">
+    <label for="ten">Tên phật tử</label>
+    <input type="text" id="ten" value="Thanh Tam" autocomplete="off">
+    <div class="grid">
+      <button id="btnAdd">addPhatTu</button>
+      <button id="btnRemove">removePhatTu</button>
+      <button id="btnRaLay">raLay — Ra lạy</button>
+      <button id="btnXam">xinXam — Xin xăm</button>
+      <button id="btnVeCho">veCho — Về chỗ</button>
+      <button id="btnState">trangThai</button>
+      <button id="btnDeep">thienNhom</button>
+      <button id="btnUndeep">ngungThien</button>
+      <button id="btnCamWide">cameraToanCanh</button>
+      <button id="btnCamZone">cameraVungPhat</button>
+    </div>
+    <p style="font-size:12.5px;color:#cbb27f;margin:10px 0 0">Luồng lạy → xin xăm: chọn tên phật tử → <b>raLay</b> (đi trục giữa, lạy 3 lạy, đứng chờ) → <b>xinXam</b> (chỉ bấm được khi đúng người đó đang chờ; xin xong người tự về ghế) hoặc <b>veCho</b> (về ghế không xin). Bấm sai lúc thì trang phát trả lỗi, lỗi hiện ở log bên dưới.</p>
+    <label class="chk"><input type="checkbox" id="bcMode"> Gửi lệnh qua BroadcastChannel (điều khiển tab phát sóng riêng đang mở)</label>
+    <div id="log">Đang chờ trang phát tải xong…</div>
+  </div>
+</main>
+
+<script>
+const logEl = document.getElementById('log');
+const frame = document.getElementById('preview');
+const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('phong-live-v0.1') : null;
+let seq = 0;
+const pending = new Map();
+if (bc) bc.onmessage = (ev) => {
+  const d = ev.data || {};
+  if (d.id && pending.has(d.id)) { pending.get(d.id)(d.result); pending.delete(d.id); }
+};
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  logEl.textContent = '[' + t + '] ' + msg + '\n' + (logEl.textContent === 'Đang chờ trang phát tải xong…' ? '' : logEl.textContent);
+}
+function api() { return frame.contentWindow && frame.contentWindow.PhongLive; }
+async function call(cmd, args) {
+  args = args || [];
+  if (document.getElementById('bcMode').checked) {
+    if (!bc) { log(cmd + ': trình duyệt không có BroadcastChannel'); return; }
+    const id = 'c' + (++seq);
+    const res = await new Promise((resolve) => {
+      pending.set(id, resolve);
+      bc.postMessage({ cmd, args, id });
+      setTimeout(() => { if (pending.has(id)) { pending.delete(id); resolve('(không có tab phát sóng nào trả lời — hãy mở index.html ở tab riêng)'); } }, (cmd === 'xinXam' || cmd === 'raLay') ? 60000 : (cmd === 'veCho' ? 45000 : 8000));
+    });
+    log(cmd + '(' + args.join(', ') + ') → ' + JSON.stringify(res));
+    return;
+  }
+  const a = api();
+  if (!a) { log(cmd + ': trang phát chưa sẵn sàng'); return; }
+  try {
+    const res = await a[cmd].apply(null, args);
+    log(cmd + '(' + args.join(', ') + ') → ' + JSON.stringify(res));
+  } catch (e) { log(cmd + ': LỖI ' + e); }
+}
+const ten = () => document.getElementById('ten').value.trim();
+document.getElementById('btnAdd').onclick = () => call('addPhatTu', [ten()]);
+document.getElementById('btnRemove').onclick = () => call('removePhatTu', [ten()]);
+document.getElementById('btnRaLay').onclick = () => call('raLay', [ten()]);
+document.getElementById('btnXam').onclick = () => call('xinXam', [ten()]);
+document.getElementById('btnVeCho').onclick = () => call('veCho', [ten()]);
+document.getElementById('btnState').onclick = () => call('trangThai', []);
+document.getElementById('btnDeep').onclick = () => call('thienNhom', []);
+document.getElementById('btnUndeep').onclick = () => call('ngungThien', []);
+document.getElementById('btnCamWide').onclick = () => call('cameraToanCanh', []);
+document.getElementById('btnCamZone').onclick = () => call('cameraVungPhat', []);
+document.getElementById('btnLand').onclick = () => { frame.classList.remove('portrait'); call('cameraToanCanh', []); };
+document.getElementById('btnPort').onclick = () => { frame.classList.add('portrait'); setTimeout(() => call('cameraVungPhat', []), 350); };
+frame.addEventListener('load', () => {
+  const t = setInterval(() => {
+    if (api()) { clearInterval(t); log('Trang phát đã sẵn sàng. Ghế và người hiện tại xem bằng nút trangThai.'); }
+  }, 500);
+});
+</script>
+</body>
+</html>
