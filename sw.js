@@ -1,8 +1,9 @@
 /* Phong Live service worker: cache the app shell and models on first visit
    so the hall reopens fast and full-screen from the home screen. */
-const CACHE = 'phong-live-cache-2';
+const CACHE = 'phong-live-cache-12';
 const CORE = [
   'index.html', 'control.html', 'xam-data.js',
+  'ARTWORK_tranh-nen-ban-tho_v2.webp',
   'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
   'vendor/three.module.js',
   'vendor/addons/controls/OrbitControls.js',

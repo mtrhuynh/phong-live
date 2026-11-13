@@ -85,7 +85,7 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 300);
-camera.position.set(0, 8.8, 17.5);
+camera.position.set(0, 5.8, 17.5);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 /* Orbit is a checking tool only: it stays OFF on the broadcast page and is
@@ -96,7 +96,7 @@ controls.dampingFactor = 0.06;
 controls.maxPolarAngle = Math.PI * 0.58;
 controls.minDistance = 3;
 controls.maxDistance = 40;
-controls.target.set(0, 2.0, -3);
+controls.target.set(0, 1.0, -4);
 camera.lookAt(controls.target);
 
 addEventListener('resize', () => {
@@ -197,19 +197,38 @@ function stepTweens(dt) {
 function lerp(a, b, k) { return a + (b - a) * k; }
 
 /* ---------- floor, carpet, walls ---------- */
+/* Wood floor: real-size planks 0.15 m wide x 1.2 m long (150 x 1200 mm),
+   grain running lengthwise toward the altar (canvas vertical = world Z,
+   door -> altar). One texture tile covers 6 x 6 m (repeat 4 x 5 over the
+   24 x 30 m hall), so a tile holds 40 planks across and 5 plank-lengths. */
 const floorTex = canvasTexture(512, 512, (g, W, H) => {
+  const TILE_M = 6, PLANK_W = 0.15, PLANK_L = 1.2;
+  const px = W / TILE_M;                    /* canvas px per metre */
+  const pw = PLANK_W * px, pl = PLANK_L * px;
+  const tones = ['#754a22', '#68401c', '#7d5026'];
   g.fillStyle = '#6e4520'; g.fillRect(0, 0, W, H);
-  for (let r = 0; r < 8; r++) {
-    g.fillStyle = ['#754a22', '#68401c', '#7d5026'][r % 3];
-    g.fillRect(0, r * 64, W, 62);
-    g.strokeStyle = 'rgba(40,20,5,.55)'; g.lineWidth = 2;
-    g.strokeRect(-4, r * 64, W + 8, 64);
+  const cols = Math.round(TILE_M / PLANK_W); /* 40 planks per tile */
+  for (let c = 0; c < cols; c++) {
+    const x0 = c * pw;
+    g.fillStyle = tones[(c * 7 + 1) % 3];
+    g.fillRect(x0, 0, pw, H);
+    /* slight per-plank shade variation */
+    g.fillStyle = 'rgba(0,0,0,' + (Math.random() * 0.08).toFixed(3) + ')';
+    g.fillRect(x0, 0, pw, H);
+    /* grain: 2 wavy lines running the length of the plank */
     g.strokeStyle = 'rgba(60,32,8,.35)'; g.lineWidth = 1;
-    for (let i = 0; i < 7; i++) {
-      const y = r * 64 + 8 + Math.random() * 48;
-      g.beginPath(); g.moveTo(0, y); g.bezierCurveTo(W * .3, y + 3, W * .7, y - 3, W, y); g.stroke();
+    for (let i = 0; i < 2; i++) {
+      const gx = x0 + pw * (0.3 + i * 0.4);
+      g.beginPath(); g.moveTo(gx, 0);
+      g.bezierCurveTo(gx + 2, H * .3, gx - 2, H * .7, gx, H); g.stroke();
     }
-    g.fillStyle = 'rgba(30,15,4,.6)'; g.fillRect(((r * 197) % W), r * 64, 3, 64);
+    /* butt joints, staggered per column so joints never line up */
+    const off = (c * 61) % pl;
+    g.fillStyle = 'rgba(30,15,4,.6)';
+    for (let y = off; y < H; y += pl) g.fillRect(x0, y, pw, 2);
+    /* long seam between planks */
+    g.fillStyle = 'rgba(40,20,5,.55)';
+    g.fillRect(x0, 0, 1.5, H);
   }
 });
 floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping; floorTex.repeat.set(4, 5);
@@ -218,23 +237,21 @@ const floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.W, ROOM.D),
 floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
 
 const carpetTex = canvasTexture(512, 1024, (g, W, H) => {
-  g.fillStyle = '#8e1f14'; g.fillRect(0, 0, W, H);
-  g.fillStyle = '#9c2618'; g.fillRect(26, 0, W - 52, H);
-  g.strokeStyle = '#e3b34e'; g.lineWidth = 10; g.strokeRect(20, 20, W - 40, H - 40);
-  g.lineWidth = 3; g.strokeRect(48, 48, W - 96, H - 96);
-  g.fillStyle = 'rgba(227,179,78,.5)';
-  for (let i = 0; i < 6; i++) {
-    const cy = 110 + i * 165, cx = W / 2;
-    for (let p = 0; p < 8; p++) {
-      const a = (p / 8) * Math.PI * 2;
-      g.beginPath();
-      g.ellipse(cx + Math.cos(a) * 30, cy + Math.sin(a) * 30, 17, 9, a, 0, Math.PI * 2);
-      g.fill();
-    }
-    g.beginPath(); g.arc(cx, cy, 13, 0, Math.PI * 2); g.fill();
-  }
+  /* v0.1.11: ONE uniform red, gold borders on the two LONG sides only.
+     The old nested fills (#8e1f14 outer / #9c2618 inner) + strokeRect borders
+     on all four edges showed as a lighter "sliced band" across the carpet
+     once the centre flowers were gone (Anita spotted it, Cừu diagnosed it). */
+  g.fillStyle = '#9c2618'; g.fillRect(0, 0, W, H);
+  g.strokeStyle = '#e3b34e';
+  g.lineWidth = 10;
+  g.beginPath(); g.moveTo(20, 0); g.lineTo(20, H); g.stroke();
+  g.beginPath(); g.moveTo(W - 20, 0); g.lineTo(W - 20, H); g.stroke();
+  g.lineWidth = 3;
+  g.beginPath(); g.moveTo(48, 0); g.lineTo(48, H); g.stroke();
+  g.beginPath(); g.moveTo(W - 48, 0); g.lineTo(W - 48, H); g.stroke();
+  /* No centre motifs (v0.1.10): the lotus flowers were removed per Trang — they looked squished/distorted in the 9:16 view. */
 });
-const carpet = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 26),
+const carpet = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 26),
   new THREE.MeshStandardMaterial({ map: carpetTex, roughness: 0.92 }));
 carpet.rotation.x = -Math.PI / 2; carpet.position.set(0, 0.012, 2.2);
 carpet.receiveShadow = true; scene.add(carpet);
@@ -292,7 +309,8 @@ function column(x, z, r) {
   return g;
 }
 [-10.8, 10.8].forEach((x) => [-12, -6, 0, 6, 12].forEach((z) => column(x, z, 0.46)));
-column(-6.6, -11.4, 0.4); column(6.6, -11.4, 0.4);
+/* v0.1.5: the two altar columns at x ±6.6, z -11.4 are removed (Anita's
+   iterated direction, ticket #11) so nothing blocks the view of the stage. */
 /* Entrance frame (the front is an open stage wall: posts + beam, no wall). */
 column(-3.1, 15, 0.42); column(3.1, 15, 0.42);
 box(7.6, 0.7, 0.8, MAT.lacquer, 0, 9.95, 15, scene);
@@ -315,7 +333,11 @@ function lantern(x, y, z, withLight) {
   return g;
 }
 [-7.4, 7.4].forEach((x) => [-10, -4, 2, 8].forEach((z, i) => lantern(x, 8.1, z, i === 1)));
-[0].forEach((x) => [-7, 1, 9].forEach((z) => lantern(x, 8.6, z, false)));
+[0].forEach((x) => [1, 9].forEach((z) => lantern(x, 8.6, z, false)));
+/* v0.1.2: the centre lantern in front of the Buddha hangs HIGHER (y 9.6
+   instead of 8.6) so it stays clear of the statue and the painting in both
+   camera views. The other two centre lanterns stay at 8.6. */
+lantern(0, 9.6, -7, false);
 lantern(-3.1, 7.9, 14.6, false); lantern(3.1, 7.9, 14.6, false);
 
 /* ---------- altar end: temple shrine, tiers, Buddha, burner ---------- */
@@ -325,12 +347,13 @@ const temple = loadFitted('models/temple.glb', 7.4);
 temple.position.set(0, 0, -17.65);
 scene.add(temple);
 
-/* Altar tiers + Buddha pedestal. Statue + pedestal top out at ~6.6 m.
+/* Altar tiers + Buddha pedestal. Statue + pedestal top out at ~7.4 m
+   (v0.1.6: statue 1.2x at 5.22 m, head top ~7.44 m).
    The whole altar stack sits back so the carpet in front of it stays
    clear: the bow point (0, 0, -9.6) is on the carpet, off the platform. */
-box(16, 0.45, 6.2, MAT.stone, 0, 0.225, -13.0, scene);
-box(12.5, 0.45, 4.8, MAT.woodRed, 0, 0.675, -13.5, scene);
-box(16.6, 0.14, 5.6, MAT.goldSoft, 0, 0.07, -13.2, scene).castShadow = false;
+box(23, 0.45, 6.2, MAT.stone, 0, 0.225, -13.0, scene);
+box(19.5, 0.45, 4.8, MAT.woodRed, 0, 0.675, -13.5, scene);
+box(23.6, 0.14, 5.6, MAT.goldSoft, 0, 0.07, -13.2, scene).castShadow = false;
 const pedestal = new THREE.Group(); pedestal.position.set(0, 0.9, -13.7); scene.add(pedestal);
 box(4.8, 0.5, 3.6, MAT.woodRed, 0, 0.25, 0, pedestal);
 box(4.0, 0.5, 3.0, MAT.lacquer, 0, 0.75, 0, pedestal);
@@ -339,21 +362,70 @@ box(3.4, 0.32, 2.6, MAT.goldSoft, 0, 1.16, 0, pedestal);
 box(3.2, 0.22, 0.8, MAT.stone, 0, 0.56, -11.0, scene);
 box(3.2, 0.22, 0.8, MAT.stone, 0, 0.11, -10.5, scene);
 
-const buddha = loadFitted('models/buddha.glb', 4.35);
+const buddha = loadFitted('models/buddha.glb', 5.22); /* v0.1.6: 1.2x (was 4.35) */
 buddha.position.set(0, 2.22, -13.7);
 scene.add(buddha);
-/* Golden halo disc behind the Buddha, in front of the shrine face. */
-const halo = new THREE.Group(); halo.position.set(0, 4.7, -14.45); scene.add(halo);
-const haloDisc = new THREE.Mesh(new THREE.CircleGeometry(3.1, 40),
-  new THREE.MeshStandardMaterial({ color: 0xe8b64c, emissive: 0xc98f2a, emissiveIntensity: 0.5, roughness: 0.4, metalness: 0.5, side: THREE.DoubleSide }));
-halo.add(haloDisc);
-const haloRing = new THREE.Mesh(new THREE.TorusGeometry(3.1, 0.09, 10, 48), MAT.gold);
-halo.add(haloRing);
-const haloRing2 = new THREE.Mesh(new THREE.TorusGeometry(2.45, 0.045, 8, 44), MAT.goldSoft);
-halo.add(haloRing2);
+/* v0.1.5: the golden disc + rings behind the Buddha are removed (Anita's
+   iterated direction, ticket #11): the statue stands directly in front
+   of the painting. */
 
-/* Bronze incense burner on the terrace, centre, before the Buddha. */
-const burner = loadFitted('models/burner.glb', 1.5);
+/* ---------- v0.1.5: framed altar backdrop, full-width (Anita's iterated
+   direction, ticket #11 comment 6820370650) ----------
+   One large framed mural panel centred on the wall/opening behind the Buddha,
+   now 23.0 m wide with its top edge at the red beam over the altar (y 9.3).
+   Artwork: ARTWORK_tranh-nen-ban-tho_v2.webp (scenery only, no Buddha figure;
+   bodhi tree, lotus pond, misty mountains, pagoda in the mist). The golden
+   disc + rings behind the statue are removed in v0.1.5, so the statue stands
+   directly in front of the painting and remains the focal point; the panel
+   is a backdrop. Panel 23.0 x 7.53 m (artwork aspect 2640:864) at z = -14.9:
+   0.1 m in front of the back-wall panels, behind the shrine front, so the
+   shrine pavilion occludes only its middle — the painting reads on both
+   sides of the shrine, and the frame reads at the edges. */
+const PANEL = { w: 23.0, h: 23.0 * 864 / 2640, y: 9.3 - (23.0 * 864 / 2640) / 2, z: -14.9 };
+const panelGroup = new THREE.Group(); panelGroup.position.set(0, PANEL.y, PANEL.z); scene.add(panelGroup);
+/* Painting (texture loads async; warm matte + soft self-glow so the mural
+   reads in the dark alcove without fighting the statue). */
+const panelMat = new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness: 0.85, metalness: 0 });
+const panelMesh = new THREE.Mesh(new THREE.PlaneGeometry(PANEL.w, PANEL.h), panelMat);
+panelGroup.add(panelMesh);
+new THREE.TextureLoader().load('ARTWORK_tranh-nen-ban-tho_v2.webp', (tex) => {
+  tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+  panelMat.map = tex; panelMat.emissiveMap = tex;
+  panelMat.emissive = new THREE.Color(0xffffff); panelMat.emissiveIntensity = 0.3;
+  panelMat.needsUpdate = true;
+});
+/* Frame: dark wood border + thin gold inner trim, proud of the painting. */
+const FRAME_W = 0.25, FRAME_D = 0.14;
+const frameMat = new THREE.MeshStandardMaterial({ color: 0x3a2110, roughness: 0.55 });
+const frameOuterW = PANEL.w + FRAME_W * 2, frameOuterH = PANEL.h + FRAME_W * 2;
+[[0, frameOuterH / 2 - FRAME_W / 2, frameOuterW, FRAME_W],
+ [0, -(frameOuterH / 2 - FRAME_W / 2), frameOuterW, FRAME_W],
+ [-(frameOuterW / 2 - FRAME_W / 2), 0, FRAME_W, PANEL.h],
+ [frameOuterW / 2 - FRAME_W / 2, 0, FRAME_W, PANEL.h]].forEach(([x, y, w, h]) => {
+  const f = new THREE.Mesh(new THREE.BoxGeometry(w, h, FRAME_D), frameMat);
+  f.position.set(x, y, FRAME_D / 2 - 0.02); panelGroup.add(f);
+});
+const trimMat = new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: 0.32, metalness: 0.75 });
+const TRIM = 0.06;
+[[0, PANEL.h / 2 - TRIM / 2, PANEL.w, TRIM],
+ [0, -(PANEL.h / 2 - TRIM / 2), PANEL.w, TRIM],
+ [-(PANEL.w / 2 - TRIM / 2), 0, TRIM, PANEL.h - TRIM * 2],
+ [PANEL.w / 2 - TRIM / 2, 0, TRIM, PANEL.h - TRIM * 2]].forEach(([x, y, w, h]) => {
+  const t = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.02), trimMat);
+  t.position.set(x, y, 0.015); panelGroup.add(t);
+});
+
+/* v0.1.5: solid dark cover above the painting, from the beam level (y 9.3)
+   up to the ceiling (y 12) at the painting plane (z -14.9), so no slats or
+   beams show in the zone above the painting. The lacquer beam at z -13.8
+   stays in front of it. */
+box(23.9, 2.7, 0.1, MAT.woodDark, 0, 10.65, -14.9, scene);
+
+/* Bronze incense burner on the terrace, centre, before the Buddha.
+   v0.1.7: 2x at 3.0 m (was 1.5 m) per the measured ratios (Trang
+   2026-11-12) — the 4.5 m burner in v0.1.6 hid the statue from the
+   chest down in the 9:16 stream view. */
+const burner = loadFitted('models/burner.glb', 3.0);
 burner.position.set(0, 0.45, -10.75);
 scene.add(burner);
 /* Candle stands + offering bowls flanking the burner. */
@@ -374,18 +446,30 @@ const flameMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
   });
 });
 
-/* ---------- seats: 15 cushions in TWO side blocks, codes G01..G15 ----------
-   v0.1.1: NO middle column — the central red carpet is a completely clear
-   processional axis from the door to the altar (devotees walk it to bow).
-   Numbering: left block first (rows from the Buddha toward the door,
-   inner seat then outer seat), then the right block the same way.
-   Left block has 8 seats (4 rows x 2), right block 7 (the rear-outer
-   corner seat is omitted to keep the total at 15). Seat order in this
-   array is also the fill order for addPhatTu (lowest free code first). */
-const SEAT_ROWS_Z = [-5.4, -2.8, -0.2, 2.4];
+/* ---------- seats: 42 cushions in TWO side blocks, 3 columns each ----------
+   v0.1.2: crowded hall — 3 columns per side x 7 rows. NO middle column:
+   the central red carpet stays a completely clear processional axis from
+   the door to the altar (devotees walk it to bow).
+   v0.1.8: banks pulled in toward the carpet (columns 3.6 / 5.6 / 7.8) and
+   the carpet narrowed to 3.4 m, so more rows read in the narrow 9:16
+   stream frame — measured 4 rows / 12 positions vs 1 row / 2 before.
+   v0.1.9: banks pulled in again (columns 3.0 / 5.0 / 7.0, even 2.0 m
+   spacing) + stream camera widened, so all 12 named devotees in the
+   two front rows fit the 9:16 frame with readable name tags.
+   Rows (front, near the Buddha, to back, near the door), spacing 2.4 m:
+   z = -5.4 … 9.0. Columns per side, spacing 2.0 / 2.0 m: |x| = 3.0 / 5.0 / 7.0.
+   The inner column stays clear of the carpet (edge |x| = 1.7 — inner
+   cushion centre 1.3 m off the carpet edge); the outer column stays
+   clear of the pillars (x = ±10.8, r 0.46 — nearest cushion centre is
+   3.8 m from a pillar centre, cushion radius 0.6 m).
+   Numbering: left block first (rows front→back, inner→outer) = G01..G21,
+   then the right block the same way = G22..G42. Seat order in this array
+   is also the fill order for addPhatTu (lowest free code first). */
+const SEAT_ROWS_Z = [-5.4, -3.0, -0.6, 1.8, 4.2, 6.6, 9.0];
+const SEAT_COLS_X = [3.0, 5.0, 7.0];
 const SEAT_POS = [];
-SEAT_ROWS_Z.forEach((z) => { SEAT_POS.push([-4.7, z], [-7.3, z]); });        /* left:  G01..G08 */
-SEAT_ROWS_Z.forEach((z, r) => { SEAT_POS.push([4.7, z]); if (r < 3) SEAT_POS.push([7.3, z]); }); /* right: G09..G15 */
+SEAT_ROWS_Z.forEach((z) => { SEAT_COLS_X.forEach((x) => SEAT_POS.push([-x, z])); }); /* left:  G01..G21 */
+SEAT_ROWS_Z.forEach((z) => { SEAT_COLS_X.forEach((x) => SEAT_POS.push([x, z])); });  /* right: G22..G42 */
 const seats = [];
 SEAT_POS.forEach((p, i) => {
   const code = 'G' + String(i + 1).padStart(2, '0');
@@ -410,7 +494,8 @@ const BOW_POINT = new THREE.Vector3(0, 0, -9.6);
    the loader auto-fits whatever sits at models/xam-set.glb into this box.
      footprint (table top): 1.20 m (X) x 0.90 m (Z)
      table top height:      0.55 m
-     model height:          0.75 m (hard cap 1.00 m)
+     model height:          1.5 m (v0.1.6: 2x per Trang 2026-11-12;
+                            the old hard cap 1.00 m is superseded)
      model origin:          base centre, front facing +Z
      anchor position:       (2.7, 0, -7.3) — right of the centre axis,
                             in front of the altar, inside the stream zone.
@@ -419,7 +504,7 @@ const XAM_ANCHOR = {
   pos: new THREE.Vector3(2.7, 0, -7.3),
   footprint: { w: 1.2, d: 0.9 },
   tableTopY: 0.55,
-  modelH: 0.75,
+  modelH: 1.5,
   standPoint: new THREE.Vector3(2.7, 0, -6.3),
 };
 const xamAnchor = new THREE.Group();
@@ -432,14 +517,23 @@ xamAnchor.position.copy(XAM_ANCHOR.pos); scene.add(xamAnchor);
 const xamSet = loadFitted('models/xam-set.glb', XAM_ANCHOR.modelH);
 xamSet.position.y = XAM_ANCHOR.tableTopY;
 xamAnchor.add(xamSet);
-/* One loose stick used for the draw animation (rises out of the set). */
-const drawStick = cyl(0.02, 0.02, 0.62, new THREE.MeshStandardMaterial({ color: 0xd8b878, roughness: 0.7 }), 0, 0, 0, xamAnchor, 6);
-drawStick.position.set(0, XAM_ANCHOR.tableTopY + 0.3, 0); drawStick.visible = false;
+/* One loose stick used for the draw animation (rises out of the set).
+   v0.1.6: scaled 2x with the set (was r 0.02, len 0.62, offset 0.3, rise 0.38). */
+const drawStick = cyl(0.04, 0.04, 1.24, new THREE.MeshStandardMaterial({ color: 0xd8b878, roughness: 0.7 }), 0, 0, 0, xamAnchor, 6);
+drawStick.position.set(0, XAM_ANCHOR.tableTopY + 0.6, 0); drawStick.visible = false;
 
-/* Fortune board: a small framed board standing beside the anchor, inside
+/* Fortune board: a framed board standing beside the anchor, inside
    the scene. Blank (lotus motif only) until a stick is drawn, then it
    shows the stick number in English-style "No. n" plus the stick name
-   exactly as stored in xam-data.js. */
+   exactly as stored in xam-data.js.
+   v0.1.6: scaled 4x to serve as the notice board (Trang 2026-11-12) —
+   panel 7.44 x 4.88 m, face 6.8 x 4.24 m, legs 4 m tall. Too big: it
+   covered ~1/3 of the painting and the drawn text ran off the right
+   edge in 9:16.
+   v0.1.7: scale 2x per the measured ratios (Trang 2026-11-12) — panel
+   3.72 x 2.44 m, face 3.4 x 2.12 m, legs 2 m tall. Text will be added
+   later; the 640x400 canvas is unchanged for now, so the motif/text
+   will look softer at 2x. */
 const boardCanvas = document.createElement('canvas'); boardCanvas.width = 640; boardCanvas.height = 400;
 const boardTex = new THREE.CanvasTexture(boardCanvas); boardTex.colorSpace = THREE.SRGBColorSpace;
 function drawBoard(que) {
@@ -464,7 +558,7 @@ function drawBoard(que) {
   boardTex.needsUpdate = true;
 }
 drawBoard(null);
-const board = new THREE.Group(); board.position.set(4.55, 0, -7.55); board.rotation.y = -0.42; scene.add(board);
+const board = new THREE.Group(); board.position.set(4.55, 0, -7.55); board.rotation.y = -0.42; board.scale.setScalar(2); scene.add(board);
 box(1.86, 1.22, 0.1, MAT.woodDark, 0, 1.25, 0, board);
 const boardFace = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 1.06),
   new THREE.MeshStandardMaterial({ map: boardTex, roughness: 0.7 }));
@@ -572,7 +666,12 @@ function kneel(actor, down) {
   return tween(1.1, (e) => { actor.body.scale.y = lerp(sy, down ? 0.5 : 1, e); });
 }
 function seatEntryPoints(seat) { return [seat.x, seat.z + 1.15]; }
-function aisleX(seat) { return seat.x >= 0 ? 9.2 : -9.2; }
+/* v0.1.2: with 3 columns the old outer side aisle (x = ±9.2) is gone —
+   the outer column at |x| = 7.0 leaves no walkable gap to the pillars.
+   Newcomers enter by the aisle between the middle and outer columns
+   (|x| = 6.0, a 1.0 m gap) and turn into their row gap — never down the
+   central carpet axis. */
+function aisleX(seat) { return seat.x >= 0 ? 6.0 : -6.0; }
 
 async function doAddPhatTu(name) {
   name = String(name || '').trim();
@@ -675,7 +774,7 @@ async function doXinXam(name) {
   /* draw one stick, show number + name on the board beside the anchor */
   drawStick.visible = true;
   await tween(1.8, (e) => {
-    drawStick.position.y = XAM_ANCHOR.tableTopY + 0.3 + e * 0.38;
+    drawStick.position.y = XAM_ANCHOR.tableTopY + 0.6 + e * 0.76;
     drawStick.rotation.z = e * 0.5;
   });
   drawBoard(que);
@@ -713,8 +812,8 @@ function flyCamera(pos, tgt, fov) {
     camera.fov = lerp(f0, fov, e); camera.updateProjectionMatrix();
   });
 }
-function cameraToanCanh() { flyCamera([0, 8.8, 17.5], [0, 2.0, -3], 50); }
-function cameraVungPhat() { flyCamera([0, 3.7, 12.3], [0, 2.3, -6.6], 63); }
+function cameraToanCanh() { flyCamera([0, 5.8, 17.5], [0, 1.0, -4], 50); }
+function cameraVungPhat() { flyCamera([0, 4.6, 14.5], [0, 2.0, -6.6], 76); }
 
 /* ---------- public API for the AI controller ---------- */
 const readyCallbacks = [];
@@ -755,10 +854,10 @@ addEventListener('message', (ev) => {
   });
 });
 
-/* ---------- seed congregation: six devotees already seated ----------
-   First two rows of each side block: G01, G02, G03 (left) + G09, G10, G11 (right). */
-['Minh An', 'Thanh Tam', 'Dieu Huong', 'Phuc Lam', 'Tue Nhi', 'An Lac'].forEach((name, i) => {
-  const seat = seats[[0, 1, 2, 8, 9, 10][i]];
+/* ---------- seed congregation: twelve devotees already seated ----------
+   Front two rows of each side bank: G01–G06 (left) + G22–G27 (right). */
+['Minh An', 'Thanh Tam', 'Dieu Am', 'Dieu Huong', 'Tinh Tam', 'Hanh Nguyen', 'Phuc Lam', 'Tue Nhi', 'Quang Minh', 'An Lac', 'Thien Duyen', 'Phuoc Hue'].forEach((name, i) => {
+  const seat = seats[[0, 1, 2, 3, 4, 5, 21, 22, 23, 24, 25, 26][i]];
   const actor = makeActor(name, seat);
   seat.actor = actor; actors.set(name, actor);
   actor.group.position.set(seat.x, 0.16, seat.z);
