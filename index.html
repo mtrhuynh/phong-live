@@ -421,6 +421,17 @@ const TRIM = 0.06;
    stays in front of it. */
 box(23.9, 2.7, 0.1, MAT.woodDark, 0, 10.65, -14.9, scene);
 
+/* v0.1.13: solid dark cover BELOW the painting, sealing the strip between
+   the platform top (y 0.9) and the panel bottom (y 1.77). The back wall has
+   no panel in the centre (x ±5.4, the shrine opening — only the two 6.6 m
+   side panels exist at z -15), so that strip showed as two dark rectangles
+   left and right of the Buddha's pedestal (Trang spotted them in v0.1.12).
+   Same dark wood, same plane (z -14.9) and same width (23.9 m) as the top
+   cover above the painting (ticket #16, Anita 2026-11-13). Top edge meets
+   the painting's bottom frame edge-to-edge at y 1.77 — it does NOT overlap
+   the painting. The part below y 0.9 is hidden inside the platform boxes. */
+box(23.9, 1.77, 0.1, MAT.woodDark, 0, 0.885, -14.9, scene);
+
 /* Bronze incense burner on the terrace, centre, before the Buddha.
    v0.1.7: 2x at 3.0 m (was 1.5 m) per the measured ratios (Trang
    2026-11-12) — the 4.5 m burner in v0.1.6 hid the statue from the
