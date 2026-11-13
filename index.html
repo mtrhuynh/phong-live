@@ -352,7 +352,7 @@ scene.add(temple);
    The whole altar stack sits back so the carpet in front of it stays
    clear: the bow point (0, 0, -9.6) is on the carpet, off the platform. */
 box(23, 0.45, 6.2, MAT.stone, 0, 0.225, -13.0, scene);
-box(19.5, 0.45, 4.8, MAT.woodRed, 0, 0.675, -13.5, scene);
+box(23, 0.45, 4.8, MAT.woodRed, 0, 0.675, -13.5, scene); /* v0.1.12: widened 19.5 -> 23.0 m (same as stone tier 1) so the red top covers the pale side shoulders; Trang spotted the exposed stone + dark wall at both platform sides in the v0.1.11 wide view. */
 box(23.6, 0.14, 5.6, MAT.goldSoft, 0, 0.07, -13.2, scene).castShadow = false;
 const pedestal = new THREE.Group(); pedestal.position.set(0, 0.9, -13.7); scene.add(pedestal);
 box(4.8, 0.5, 3.6, MAT.woodRed, 0, 0.25, 0, pedestal);
