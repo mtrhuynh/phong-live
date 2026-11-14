@@ -351,9 +351,9 @@ scene.add(temple);
    (v0.1.6: statue 1.2x at 5.22 m, head top ~7.44 m).
    The whole altar stack sits back so the carpet in front of it stays
    clear: the bow point (0, 0, -9.6) is on the carpet, off the platform. */
-box(23, 0.45, 6.2, MAT.stone, 0, 0.225, -13.0, scene);
+box(24, 0.45, 6.2, MAT.stone, 0, 0.225, -13.0, scene); /* v0.1.15: white stone base widened 23 -> 24 m (x ±12, flush with both side walls like the red stage and pedestal above it). v0.1.14 left this base at 23 m, so a 0.5 m floor gap stayed open at each end under the red stage's overhang (Trang circled both ends 2026-11-15 06:19, "the white base is still a bit open"). Height/depth/centre unchanged. */
 box(24, 0.45, 4.8, MAT.woodRed, 0, 0.675, -13.5, scene); /* v0.1.14: widened 23 -> 24 m (x ±12, touching both side walls; Trang 2026-11-14 23:13 — the red stage looked too small next to the widened pedestal). Top y 0.9, depth 4.8, z -13.5 unchanged — NOT raised. v0.1.12 widening 19.5 -> 23.0 m kept as the base. */
-box(23.6, 0.14, 5.6, MAT.goldSoft, 0, 0.07, -13.2, scene).castShadow = false;
+box(24, 0.14, 5.6, MAT.goldSoft, 0, 0.07, -13.2, scene).castShadow = false; /* v0.1.15: widened 23.6 -> 24 m with the white base — at 23.6 its end tips poked 0.3 m out past the old 23 m white base as the small yellow tips visible in Trang's circled spots. */
 const pedestal = new THREE.Group(); pedestal.position.set(0, 0.9, -13.7); scene.add(pedestal);
 /* v0.1.14: pedestal WIDENED to the side walls (Trang 2026-11-14 23:09 —
    NOT a raise; the top platform looked too small). All three boxes now
