@@ -294,7 +294,21 @@ const MAT = {
   bronze:    new THREE.MeshStandardMaterial({ color: 0x8a6a34, roughness: 0.45, metalness: 0.65 }),
   stone:     new THREE.MeshStandardMaterial({ color: 0x6b3a26, roughness: 0.95 }), /* v0.1.21: was pale 0x9a8a76 — the altar base, front steps and column plinths read as a bright white band against the warm red-gold backdrop and made the painting junction look pasted on (Anita 2026-11-15). Now a warm dark terracotta-brown that sits with the lacquer tiers. */
   cushion:   new THREE.MeshStandardMaterial({ color: 0xa02318, roughness: 0.8 }),
+  /* v0.1.22: the altar tiers (base, red stage, gold trim, pedestal stack,
+     front steps) all wear this one wood material; its map — loaded just
+     below — is a patch of the backdrop painting's OWN wooden floor
+     (Anita 2026-11-15: so the tiers read as one more wooden altar
+     platform continuing into the painting, not a picture pasted behind
+     coloured boxes). The gold/red/brown tier colours are retired. */
+  altarWood: new THREE.MeshStandardMaterial({ color: 0x8a6844, roughness: 0.6 }),
 };
+new THREE.TextureLoader().load('wood-floor-backdrop.webp', (tex) => {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(6, 1); tex.anisotropy = 4;
+  MAT.altarWood.map = tex; MAT.altarWood.color.set(0xffffff);
+  MAT.altarWood.needsUpdate = true;
+});
 function box(w, h, d, mat, x, y, z, parent) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
   m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true;
@@ -514,9 +528,9 @@ scene.add(temple);
    (v0.1.6: statue 1.2x at 5.22 m, head top ~7.44 m).
    The whole altar stack sits back so the carpet in front of it stays
    clear: the bow point (0, 0, -9.6) is on the carpet, off the platform. */
-box(24, 0.45, 6.2, MAT.stone, 0, 0.225, -13.0, scene); /* v0.1.15: white stone base widened 23 -> 24 m (x ±12, flush with both side walls like the red stage and pedestal above it). v0.1.14 left this base at 23 m, so a 0.5 m floor gap stayed open at each end under the red stage's overhang (Trang circled both ends 2026-11-15 06:19, "the white base is still a bit open"). Height/depth/centre unchanged. */
-box(24, 0.45, 4.8, MAT.woodRed, 0, 0.675, -13.5, scene); /* v0.1.14: widened 23 -> 24 m (x ±12, touching both side walls; Trang 2026-11-14 23:13 — the red stage looked too small next to the widened pedestal). Top y 0.9, depth 4.8, z -13.5 unchanged — NOT raised. v0.1.12 widening 19.5 -> 23.0 m kept as the base. */
-box(24, 0.14, 5.6, MAT.goldSoft, 0, 0.07, -13.2, scene).castShadow = false; /* v0.1.15: widened 23.6 -> 24 m with the white base — at 23.6 its end tips poked 0.3 m out past the old 23 m white base as the small yellow tips visible in Trang's circled spots. */
+box(24, 0.45, 6.2, MAT.altarWood, 0, 0.225, -13.0, scene); /* v0.1.15: white stone base widened 23 -> 24 m (x ±12, flush with both side walls like the red stage and pedestal above it). v0.1.14 left this base at 23 m, so a 0.5 m floor gap stayed open at each end under the red stage's overhang (Trang circled both ends 2026-11-15 06:19, "the white base is still a bit open"). Height/depth/centre unchanged. */
+box(24, 0.45, 4.8, MAT.altarWood, 0, 0.675, -13.5, scene); /* v0.1.14: widened 23 -> 24 m (x ±12, touching both side walls; Trang 2026-11-14 23:13 — the red stage looked too small next to the widened pedestal). Top y 0.9, depth 4.8, z -13.5 unchanged — NOT raised. v0.1.12 widening 19.5 -> 23.0 m kept as the base. */
+box(24, 0.14, 5.6, MAT.altarWood, 0, 0.07, -13.2, scene).castShadow = false; /* v0.1.15: widened 23.6 -> 24 m with the white base — at 23.6 its end tips poked 0.3 m out past the old 23 m white base as the small yellow tips visible in Trang's circled spots. */
 const pedestal = new THREE.Group(); pedestal.position.set(0, 0.9, -13.7); scene.add(pedestal);
 /* v0.1.14: pedestal WIDENED to the side walls (Trang 2026-11-14 23:09 —
    NOT a raise; the top platform looked too small). All three boxes now
@@ -527,12 +541,12 @@ const pedestal = new THREE.Group(); pedestal.position.set(0, 0.9, -13.7); scene.
    across the full width. The two lacquered columns at (±10.8, -12) now
    rise out of the pedestal's gold top (their lower 0.9-2.22 m is inside
    it) — reads as pillars on the platform. */
-box(24, 0.5, 3.6, MAT.woodRed, 0, 0.25, 0, pedestal);
-box(24, 0.5, 3.0, MAT.lacquer, 0, 0.75, 0, pedestal);
-box(24, 0.32, 2.6, MAT.goldSoft, 0, 1.16, 0, pedestal);
+box(24, 0.5, 3.6, MAT.altarWood, 0, 0.25, 0, pedestal);
+box(24, 0.5, 3.0, MAT.altarWood, 0, 0.75, 0, pedestal);
+box(24, 0.32, 2.6, MAT.altarWood, 0, 1.16, 0, pedestal);
 /* Steps down the front of the tiers, centre. */
-box(3.2, 0.22, 0.8, MAT.stone, 0, 0.56, -11.0, scene);
-box(3.2, 0.22, 0.8, MAT.stone, 0, 0.11, -10.5, scene);
+box(3.2, 0.22, 0.8, MAT.altarWood, 0, 0.56, -11.0, scene);
+box(3.2, 0.22, 0.8, MAT.altarWood, 0, 0.11, -10.5, scene);
 
 const buddha = loadFitted('models/buddha.glb', 5.22); /* v0.1.6: 1.2x (was 4.35) */
 buddha.position.set(0, 2.22, -13.7);
