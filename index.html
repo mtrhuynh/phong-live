@@ -36,11 +36,30 @@
   #boardPill { cursor:move; user-select:none; -webkit-user-select:none; touch-action:none; }
   #boardMain .pb-grip { position:absolute; right:1px; bottom:0; width:18px; height:18px;
     cursor:nwse-resize; color:rgba(245,201,94,.85); font-size:12px; line-height:18px; text-align:center; }
+  /* v0.1.25 (Anita #29): broadcast mode — Dai Phat audio engine lives in
+     the room page so the phone streams picture + sound from one page.
+     The bar below is the LOCAL fallback toggle: it appears ONLY in
+     operator mode (?controls=1) and only in the letterbox OUTSIDE the
+     9:16 stage (positioned by applySize); the broadcast frame itself
+     never shows any player UI. */
+  #dpBar { position:fixed; z-index:45; display:none; align-items:center; gap:8px;
+    background:rgba(18,9,3,.85); border:1px solid rgba(245,201,94,.55); border-radius:8px;
+    color:#ffe9b8; padding:6px 10px; font-family:Arial, "Helvetica Neue", sans-serif;
+    font-size:12px; line-height:1.4; }
+  #dpBar button { background:#7e1f16; color:#ffe9b8; border:1px solid #a03a28; border-radius:6px;
+    padding:5px 10px; font-size:12px; cursor:pointer; font-family:inherit; }
+  #dpBar button.off { background:#3a2a1a; border-color:#6b4e2a; }
 </style>
 </head>
 <body>
 <div id="scene"></div>
 <div id="loading"><div class="spin">🪷</div></div>
+<!-- v0.1.25 (#29): Dai Phat voice + music bed. Pure WebAudio — NO
+     <audio> elements. The bed/voice are fetched (fetch+decodeAudioData)
+     and played through AudioBufferSourceNodes: media elements stall
+     under the service worker + multi-tab headless runs (range-request
+     interplay), while fetch is reliable. Nothing visible, never in the stage. -->
+<div id="dpBar"><button id="dpBarBtn" class="off">🎙 Bật đài phát</button><span id="dpBarState">Đài phát đang tắt</span></div>
 <div id="boardMain" class="plboard">
   <div class="pb-title">📋 THAM GIA CÙNG PHÒNG</div>
   <div class="pb-sub">🌿 Một nơi yên tĩnh để tự tu tập</div>
@@ -166,6 +185,7 @@ function applySize() {
   else { boardMain.style.width = ''; boardMain.style.maxWidth = Math.round(r.w * 0.62) + 'px'; }
   placeBoard(boardMain, boardPos, r.x + pad, r.y + pad, r, pad);
   placeBoard(boardPill, boardPillPos, null, r.y + Math.round(r.h * 0.36), r, pad);
+  if (typeof dpPlaceBar === 'function') dpPlaceBar(); /* v0.1.25: local Dai Phat toggle, letterbox only */
 }
 /* Position one board inside the stage: saved fraction if the operator
    dragged it, else the default spot; then clamp so it never leaves the
@@ -1147,6 +1167,365 @@ function flyCamera(pos, tgt, fov) {
 function cameraToanCanh() { flyCamera([0, 5.8, 17.5], [0, 1.0, -4], 50); }
 function cameraVungPhat() { flyCamera([0, 4.6, 14.5], [0, 2.0, -6.6], 76); }
 
+/* =====================================================================
+   v0.1.25 (Anita, ticket #29): BROADCAST MODE — Dai Phat audio engine,
+   embedded in the room page so the phone streams picture + sound from
+   ONE page (TikTok LIVE Studio is not available for Anita's account,
+   so live runs by phone screen-share; a separate dai-phat.html tab
+   cannot be shown at the same time). dai-phat.html stays untouched as
+   a standalone fallback; this engine ports its rotation + ducking
+   rules verbatim, with the music bed swapped for a bundled file.
+
+   Music bed (Anita 2026-11-15 22:11, #29 cmt 6896641991): a real
+   royalty-free track, NOT the self-generated WebAudio pad as the main
+   bed. File: audio/bed.mp3 — "Infinite Peace" (FreePD, CC0 public
+   domain), trimmed to a 50 s seamless loop, normalized -20 LUFS.
+   The generative pad below survives ONLY as an emergency fallback
+   if the bed file fails to load (state.bed then reads 'pad').
+
+   Voice: Anita's own recordings, playlist.json + audio/NN.mp3
+   (Mica #28, already in this repo). Rotation, identical to
+   dai-phat.html: welcome once at start -> [gap -> life -> gap ->
+   sutra -> gap -> life -> gap -> breath] repeating; remind after
+   every 4 readings; close ONLY via daiPhatClose. Music-only gaps
+   selectable via daiPhatGap (default 180 s = 3 min). Music ducks
+   to 25% under voice.
+
+   Audio plumbing is pure WebAudio (fetch + decodeAudioData +
+   AudioBufferSourceNodes) — no <audio> elements: media elements stall
+   under the service worker + multi-tab runs, while fetch is reliable.
+   No player UI lives in the 9:16 stage — there is no player DOM at
+   all, and the only visible control is #dpBar, which shows solely in
+   operator mode (?controls=1) in the letterbox outside the stage
+   (positioned by applySize below).
+   State hook (same shape as dai-phat.html's window.DaiPhat.state,
+   plus room extras) + proactive push over BroadcastChannel
+   'phong-live-v0.1' ({type:'daiPhatState', state}) so control.html
+   can show the now-playing piece without polling.
+
+   Audio-unlock note: a phone browser blocks audio until the page
+   has had a user gesture. daiPhatOn therefore returns
+   {ok:false, loi:'...'} if playback is blocked, and ANY tap on the
+   room page retries it (the local #dpBar toggle IS such a tap, so
+   the fallback path unlocks audio directly).
+   ===================================================================== */
+const dpBar = document.getElementById('dpBar');
+const dpBarBtn = document.getElementById('dpBarBtn');
+const dpBarState = document.getElementById('dpBarState');
+const DP_BED_FILE = 'audio/bed.mp3';
+const DP_BED_VOL = 0.55; /* same default as dai-phat.html volMusic 55 */
+const dp = {
+  playlist: [], started: false, audioBlocked: false,
+  lifeQueue: [], sutraQueue: [], cycleStep: 0, readingsDone: 0,
+  gapSeconds: 180, gapTimer: null, gapEndsAt: 0, currentItem: null,
+  bed: 'none', /* 'file' | 'pad' | 'none' */
+  bc: null,
+};
+try { dp.bc = new BroadcastChannel('phong-live-v0.1'); } catch (e) {}
+function dpBedLevel() { return DP_BED_VOL * 0.24; }
+/* Pure-WebAudio plumbing. Bed + voice are fetched (fetch + decodeAudioData)
+   and played through AudioBufferSourceNodes — NOT <audio> elements.
+   Why: media elements stall under the service worker + multi-tab runs
+   (their Range requests get a cached full response / starve while the
+   main thread renders), while fetch is reliable everywhere (verified:
+   plain fetch of bed.mp3 returns 200 instantly in the same tab where
+   the element sat at readyState 0 for 20+ s). Ducking runs on the
+   audio thread (linearRamp), so it stays smooth while the room renders.
+   One shared AudioContext; bed buffer is decoded once and cached,
+   voice pieces are decoded on demand (a decoded 40 s piece is ~14 MB
+   PCM — caching all 21 would be ~300 MB, so only the bed is kept). */
+let dpAC = null, dpBedGain = null, dpVoiceGain = null;
+let dpBedSrc = null, dpBedBuf = null, dpBedStartAt = 0, dpBedEnded = false, dpVoiceSrc = null;
+let dpVoiceActive = false, dpVoiceStopExpected = false;
+function dpEnsureAC() {
+  if (dpAC) return dpAC;
+  dpAC = new (window.AudioContext || window.webkitAudioContext)();
+  dpBedGain = dpAC.createGain(); dpBedGain.gain.value = dpBedLevel();
+  dpBedGain.connect(dpAC.destination);
+  dpVoiceGain = dpAC.createGain(); dpVoiceGain.gain.value = 1;
+  dpVoiceGain.connect(dpAC.destination);
+  return dpAC;
+}
+async function dpLoadBuf(url) {
+  const res = await fetch(url, { cache: 'default' });
+  if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + url);
+  return dpAC.decodeAudioData(await res.arrayBuffer());
+}
+function dpDuck(on) {
+  const target = on ? dpBedLevel() * 0.25 : dpBedLevel();
+  if (dp.bed === 'file' && dpBedGain && dpAC) {
+    dpBedGain.gain.cancelScheduledValues(dpAC.currentTime);
+    dpBedGain.gain.linearRampToValueAtTime(target, dpAC.currentTime + 1.2);
+  } else if (dp.bed === 'pad' && dpPadGain && dpPadAC) {
+    dpPadGain.gain.cancelScheduledValues(dpPadAC.currentTime);
+    dpPadGain.gain.linearRampToValueAtTime(target, dpPadAC.currentTime + 1.2);
+  }
+}
+function dpStopVoice() {
+  if (!dpVoiceSrc) return;
+  dpVoiceStopExpected = true; dpVoiceActive = false;
+  try { dpVoiceSrc.stop(); } catch (e) {}
+  try { dpVoiceSrc.disconnect(); } catch (e) {}
+  dpVoiceSrc = null;
+}
+/* --- generative pad: emergency fallback only (bed file failed) --- */
+let dpPadAC = null, dpPadGain = null, dpPadChordTimer = null, dpPadBellTimer = null, dpPadChordIdx = 0;
+const DP_CHORDS = [
+  [130.81, 196.00, 246.94, 329.63], [110.00, 164.81, 261.63, 329.63],
+  [87.31, 174.61, 220.00, 261.63], [98.00, 196.00, 246.94, 293.66]];
+const DP_BELLS = [523.25, 587.33, 659.25, 783.99, 880.00];
+function dpStartPad() {
+  if (dpPadAC) return;
+  dpPadAC = new (window.AudioContext || window.webkitAudioContext)();
+  dpPadGain = dpPadAC.createGain(); dpPadGain.gain.value = dpBedLevel();
+  const comp = dpPadAC.createDynamicsCompressor();
+  dpPadGain.connect(comp); comp.connect(dpPadAC.destination);
+  dpPadChordIdx = 0; dpPadPlayChord(); dpPadChordTimer = setInterval(dpPadPlayChord, 9000);
+  dpPadScheduleBell();
+  dp.bed = 'pad';
+}
+function dpPadPlayChord() {
+  if (!dpPadAC) return;
+  const now = dpPadAC.currentTime, chord = DP_CHORDS[dpPadChordIdx++ % DP_CHORDS.length];
+  chord.forEach((f, i) => {
+    [0, 1.5].forEach((det) => {
+      const o = dpPadAC.createOscillator(), g = dpPadAC.createGain(), fl = dpPadAC.createBiquadFilter();
+      o.type = i < 2 ? 'sine' : 'triangle'; o.frequency.value = f; o.detune.value = det;
+      fl.type = 'lowpass'; fl.frequency.value = 900;
+      g.gain.setValueAtTime(0, now);
+      g.gain.linearRampToValueAtTime(0.05 - i * 0.007, now + 3.2);
+      g.gain.linearRampToValueAtTime(0.0001, now + 9.4);
+      o.connect(fl); fl.connect(g); g.connect(dpPadGain);
+      o.start(now); o.stop(now + 9.6);
+    });
+  });
+}
+function dpPadScheduleBell() {
+  dpPadBellTimer = setTimeout(() => {
+    if (dpPadAC) {
+      const now = dpPadAC.currentTime, f = DP_BELLS[Math.floor(Math.random() * DP_BELLS.length)];
+      const o = dpPadAC.createOscillator(), g = dpPadAC.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.028, now);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 2.8);
+      o.connect(g); g.connect(dpPadGain); o.start(now); o.stop(now + 3);
+    }
+    dpPadScheduleBell();
+  }, 7000 + Math.random() * 9000);
+}
+function dpStopPad() {
+  clearInterval(dpPadChordTimer); clearTimeout(dpPadBellTimer);
+  if (dpPadAC) dpPadAC.close().catch(() => {});
+  dpPadAC = null; dpPadGain = null;
+}
+/* --- voice rotation (ported verbatim from dai-phat.html) --- */
+function dpShuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function dpRefill() {
+  if (!dp.lifeQueue.length) dp.lifeQueue = dpShuffle(dp.playlist.filter(p => p.kind === 'life').slice());
+  if (!dp.sutraQueue.length) dp.sutraQueue = dpShuffle(dp.playlist.filter(p => p.kind === 'sutra').slice());
+}
+function dpPlaying() { return dpVoiceActive && !!dpVoiceSrc; }
+function dpPushState() {
+  const s = dpState();
+  try { if (dp.bc) dp.bc.postMessage({ type: 'daiPhatState', state: s }); } catch (e) {}
+  dpUpdateBar();
+}
+function dpState() {
+  const cur = dp.currentItem;
+  return {
+    started: dp.started, paused: false, readingsDone: dp.readingsDone,
+    cycleStep: dp.cycleStep, items: dp.playlist.length,
+    playing: dpPlaying() ? (cur && cur.title) : null,
+    on: dp.started, playingTitle: dpPlaying() ? (cur && cur.title) : null,
+    playingKind: dpPlaying() ? (cur && cur.kind) : null,
+    playingIndex: dpPlaying() ? dp.playlist.indexOf(cur) : -1,
+    gap: dp.gapSeconds, bed: dp.bed, bedFile: DP_BED_FILE,
+    bedGain: dpBedGain ? +dpBedGain.gain.value.toFixed(3) : null,
+    audioBlocked: dp.audioBlocked,
+  };
+}
+async function dpPlayItem(item) {
+  if (!item) { dpScheduleGap(); return; }
+  dp.currentItem = item; dpRefill();
+  dpStopVoice(); dpDuck(true);
+  let buf;
+  try { buf = await dpLoadBuf(item.file); }
+  catch (e) { dpDuck(false); dpScheduleGap(5); dpPushState(); return; } /* file missing/broken: skip it */
+  if (!dp.started || dp.currentItem !== item) return; /* stopped / replaced while decoding */
+  const src = dpAC.createBufferSource();
+  src.buffer = buf; src.connect(dpVoiceGain);
+  dpVoiceStopExpected = false; dpVoiceActive = true;
+  src.onended = () => {
+    if (dpVoiceStopExpected || dpVoiceSrc !== src) return;
+    dpVoiceSrc = null; dpVoiceActive = false;
+    dpDuck(false); dp.readingsDone++; dpScheduleGap(); dpPushState();
+  };
+  dpVoiceSrc = src;
+  try { src.start(); } catch (e) { dpVoiceSrc = null; dpVoiceActive = false; dpDuck(false); dpScheduleGap(5); }
+  dpPushState();
+}
+function dpScheduleGap(seconds) {
+  const gap = seconds || dp.gapSeconds;
+  dp.gapEndsAt = Date.now() + gap * 1000;
+  clearTimeout(dp.gapTimer);
+  dp.gapTimer = setTimeout(dpNextReading, gap * 1000);
+}
+function dpNextReading() {
+  if (!dp.started) return;
+  dpRefill();
+  if (dp.readingsDone > 0 && dp.readingsDone % 4 === 3) {
+    const r = dp.playlist.find(p => p.kind === 'remind');
+    if (r) { dpPlayItem(r); return; }
+  }
+  const step = dp.cycleStep++ % 4;
+  if (step === 3) { const b = dp.playlist.find(p => p.kind === 'breath'); if (b) { dpPlayItem(b); return; } }
+  dpPlayItem(step % 2 === 0 ? dp.lifeQueue.shift() : (dp.sutraQueue.shift() || dp.lifeQueue.shift()));
+}
+async function dpStartBed() {
+  if (dp.bed === 'file') return true;
+  dpEnsureAC();
+  if (dpAC.state === 'suspended') { try { await dpAC.resume(); } catch (e) {} }
+  if (dpAC.state !== 'running') throw Object.assign(new Error('audio context suspended'), { name: 'NotAllowedError' });
+  try {
+    if (!dpBedBuf) dpBedBuf = await dpLoadBuf(DP_BED_FILE);
+  } catch (e) {
+    /* bed file missing/broken -> generative pad fallback */
+    try { dpStartPad(); return true; } catch (e2) { dp.bed = 'none'; return false; }
+  }
+  dpStopBedSrc();
+  dpBedEnded = false;
+  const src = dpAC.createBufferSource();
+  src.buffer = dpBedBuf; src.loop = true; src.connect(dpBedGain);
+  src.onended = () => { dpBedEnded = true; }; /* loop=true: never fires unless the loop breaks */
+  dpBedSrc = src; dpBedStartAt = dpAC.currentTime; src.start();
+  dp.bed = 'file'; return true;
+}
+function dpStopBedSrc() {
+  if (!dpBedSrc) return;
+  try { dpBedSrc.stop(); } catch (e) {}
+  try { dpBedSrc.disconnect(); } catch (e) {}
+  dpBedSrc = null;
+}
+async function dpDaiPhatOn() {
+  if (dp.started) return Object.assign({ ok: true, alreadyOn: true }, dpState());
+  try { dp.playlist = await (await fetch('playlist.json', { cache: 'no-store' })).json(); }
+  catch (e) { dp.playlist = []; }
+  dp.started = true; dp.audioBlocked = false;
+  try { await dpStartBed(); }
+  catch (e) {
+    if (e && e.name === 'NotAllowedError') {
+      dp.audioBlocked = true; dpPushState();
+      return Object.assign({ ok: false, loi: 'trinh duyet chan tu phat am thanh — cham vao trang phat mot lan roi bat lai' }, dpState());
+    }
+  }
+  const welcome = dp.playlist.find(p => p.kind === 'welcome');
+  if (welcome) dpPlayItem(welcome);
+  else if (dp.playlist.length) dpScheduleGap(20);
+  dpPushState();
+  return Object.assign({ ok: true }, dpState());
+}
+function dpDaiPhatOff() {
+  dp.started = false; dp.audioBlocked = false;
+  clearTimeout(dp.gapTimer); dp.gapTimer = null;
+  dpStopVoice(); dpStopBedSrc();
+  dpDuck(false); /* restore bed gain to full BEFORE bed='none' (duck checks bed) */
+  if (dpAC && dpAC.state === 'running') dpAC.suspend().catch(() => {}); /* suspend, don't close: reuse on re-on */
+  dpStopPad(); dp.bed = 'none'; dp.currentItem = null;
+  /* fresh rotation on the next start: welcome plays again, then the
+     life/sutra/breath cycle restarts from step 0 */
+  dp.cycleStep = 0; dp.readingsDone = 0; dp.lifeQueue = []; dp.sutraQueue = [];
+  dpPushState();
+  return Object.assign({ ok: true }, dpState());
+}
+function dpDaiPhatNext() {
+  if (!dp.started) return Object.assign({ ok: false, loi: 'dai phat chua bat' }, dpState());
+  clearTimeout(dp.gapTimer);
+  dpStopVoice();
+  dpDuck(false); dpNextReading(); dpPushState();
+  return Object.assign({ ok: true }, dpState());
+}
+function dpDaiPhatPlay(index) {
+  if (!dp.started) return Object.assign({ ok: false, loi: 'dai phat chua bat' }, dpState());
+  const i = Math.floor(Number(index));
+  if (!Number.isFinite(i) || i < 0 || i >= dp.playlist.length)
+    return Object.assign({ ok: false, loi: 'chi so doan khong hop le: ' + index }, dpState());
+  clearTimeout(dp.gapTimer);
+  dpStopVoice();
+  dpDuck(false); dpPlayItem(dp.playlist[i]); dpPushState();
+  return Object.assign({ ok: true }, dpState());
+}
+function dpDaiPhatClose() {
+  if (!dp.started) return Object.assign({ ok: false, loi: 'dai phat chua bat' }, dpState());
+  const c = dp.playlist.find(p => p.kind === 'close');
+  if (!c) return Object.assign({ ok: false, loi: 'khong co loi ket trong playlist' }, dpState());
+  clearTimeout(dp.gapTimer);
+  dpStopVoice();
+  dpDuck(false); dpPlayItem(c); dpPushState();
+  return Object.assign({ ok: true }, dpState());
+}
+function dpDaiPhatGap(seconds) {
+  const s = Math.floor(Number(seconds));
+  if (!Number.isFinite(s) || s < 10 || s > 900)
+    return { ok: false, loi: 'khoang nghi phai tu 10 den 900 giay', gap: dp.gapSeconds };
+  dp.gapSeconds = s; dpPushState();
+  return Object.assign({ ok: true }, dpState());
+}
+/* Any tap on the room page retries audio after a NotAllowedError block. */
+function dpUnlockAudio() {
+  if (!dp.started || !dp.audioBlocked) return;
+  dp.audioBlocked = false;
+  dpEnsureAC();
+  dpAC.resume().catch(() => {});
+  dpStartBed().then(() => {
+    if (dp.currentItem && !dpPlaying()) dpPlayItem(dp.currentItem); /* restart the piece */
+    else if (!dpPlaying()) dpScheduleGap(3);
+    dpPushState();
+  }).catch(() => { dp.audioBlocked = true; });
+}
+addEventListener('pointerdown', dpUnlockAudio);
+addEventListener('keydown', dpUnlockAudio);
+/* Local fallback toggle (#dpBar): operator mode only, letterbox only. */
+function dpUpdateBar() {
+  const on = dp.started;
+  dpBarBtn.textContent = on ? '⏹ Tắt đài phát' : '🎙 Bật đài phát';
+  dpBarBtn.classList.toggle('off', !on);
+  dpBarState.textContent = on
+    ? (dpPlaying() && dp.currentItem ? '🔊 Đang đọc: ' + dp.currentItem.title : (dp.audioBlocked ? '⚠ Chưa phát được — chạm vào trang rồi bật lại' : '🎵 Nhạc nền thiền'))
+    : 'Đài phát đang tắt';
+}
+dpBarBtn.addEventListener('click', () => {
+  if (dp.started) dpDaiPhatOff(); else dpDaiPhatOn();
+});
+const DP_OPERATOR = new URLSearchParams(location.search).has('controls');
+function dpPlaceBar() {
+  /* try/catch: applySize() runs once before this engine section executes
+     (dpBar is still in its TDZ then) — the first call is a no-op. */
+  try {
+  if (!DP_OPERATOR) { dpBar.style.display = 'none'; return; }
+  const r = stageRect();
+  const gapTop = r.y, gapBottom = innerHeight - (r.y + r.h), gapSide = r.x;
+  dpBar.style.display = 'flex';
+  dpBar.style.left = ''; dpBar.style.top = ''; dpBar.style.right = ''; dpBar.style.bottom = '';
+  if (gapTop >= 40) { dpBar.style.left = Math.max(6, r.x + 6) + 'px'; dpBar.style.top = '6px'; }
+  else if (gapBottom >= 40) { dpBar.style.left = Math.max(6, r.x + 6) + 'px'; dpBar.style.bottom = '6px'; }
+  else if (gapSide >= 150) { dpBar.style.left = '6px'; dpBar.style.top = '6px'; }
+  else dpBar.style.display = 'none'; /* stage fills the window: no room outside it */
+  } catch (e) {}
+}
+window.DaiPhat = { state: () => dpState() };
+/* Diagnostic handle for whoever verifies the build (not a UI). */
+window.__dpTest = {
+  acState: () => (dpAC ? dpAC.state : null),
+  acTime: () => (dpAC ? +dpAC.currentTime.toFixed(2) : null),
+  bedOn: () => !!dpBedSrc,
+  bedLoop: () => (dpBedSrc ? !!dpBedSrc.loop : null),
+  bedPos: () => (dpBedSrc && dpBedBuf ? +((dpAC.currentTime - dpBedStartAt) % dpBedBuf.duration).toFixed(2) : null),
+  bedElapsed: () => (dpBedSrc ? +(dpAC.currentTime - dpBedStartAt).toFixed(1) : null),
+  bedEnded: () => dpBedEnded,
+  bedDur: () => (dpBedBuf ? +dpBedBuf.duration.toFixed(1) : null),
+  voiceOn: () => !!dpVoiceSrc,
+};
+
 /* ---------- public API for the AI controller ---------- */
 const readyCallbacks = [];
 window.PhongLive = {
@@ -1162,6 +1541,16 @@ window.PhongLive = {
   khungPhat: (on) => setKhungPhat(on),
   bangThongBao: (on) => setBangThongBao(on),
   datLaiBang: () => setDatLaiBang(),
+  /* v0.1.25 (#29): broadcast mode — Dai Phat audio in the room page.
+     All commands also work over BroadcastChannel / postMessage via
+     runCommand below, so control.html drives them remotely. */
+  daiPhatOn: () => dpDaiPhatOn(),
+  daiPhatOff: () => dpDaiPhatOff(),
+  daiPhatNext: () => dpDaiPhatNext(),
+  daiPhatPlay: (i) => dpDaiPhatPlay(i),
+  daiPhatClose: () => dpDaiPhatClose(),
+  daiPhatGap: (s) => dpDaiPhatGap(s),
+  daiPhatState: () => dpState(),
   ready: new Promise((res) => readyCallbacks.push(res)),
 };
 /* Debug/diagnostic handle for whoever verifies the build (not a UI). */

@@ -62,6 +62,28 @@
       <button id="btnBoardReset" class="alt">datLaiBang — Đặt lại vị trí bảng</button>
     </div>
     <p style="font-size:12.5px;color:#cbb27f;margin:10px 0 0">Luồng lạy → xin xăm: chọn tên phật tử → <b>raLay</b> (đi trục giữa, lạy 3 lạy, đứng chờ) → <b>xinXam</b> (chỉ bấm được khi đúng người đó đang chờ; xin xong người tự về ghế) hoặc <b>veCho</b> (về ghế không xin). Bấm sai lúc thì trang phát trả lỗi, lỗi hiện ở log bên dưới.</p>
+
+    <hr style="border:0;border-top:1px solid #55401c;margin:16px 0 4px">
+    <h2 style="font-size:15px;color:#f5c95e;margin:6px 0 2px">🎙 Đài Phát — chế độ phát sóng (#29)</h2>
+    <p style="font-size:12.5px;color:#cbb27f;margin:0 0 8px">Âm thanh Đại Phát nhúng trong chính trang phát: điện thoại chia sẻ màn hình sẽ có cả hình lẫn tiếng. Bật/tắt từ đây; nút phát chỉ điều khiển âm thanh, không hiện gì trong khung 9:16.</p>
+    <div class="grid">
+      <button id="btnDpOn">🎙 Bật đài phát</button>
+      <button id="btnDpOff" class="alt">⏹ Tắt đài phát</button>
+      <button id="btnDpNext">⏭ Đoạn tiếp ngay</button>
+      <button id="btnDpClose" class="alt">🌙 Lời kết buổi</button>
+    </div>
+    <label for="dpGap">Nghỉ giữa các đoạn đọc (nhạc nền)</label>
+    <select id="dpGap" style="width:100%;box-sizing:border-box;padding:9px 10px;border-radius:8px;border:1px solid #7a5a22;background:#170f08;color:#ffe9b8;font-size:14px">
+      <option value="120">2 phút nhạc</option>
+      <option value="180" selected>3 phút nhạc</option>
+      <option value="300">5 phút nhạc</option>
+    </select>
+    <label for="dpPicker">Chọn đoạn đọc (phát ngay đoạn đó, rồi tiếp tục vòng đọc từ đó)</label>
+    <select id="dpPicker" style="width:100%;box-sizing:border-box;padding:9px 10px;border-radius:8px;border:1px solid #7a5a22;background:#170f08;color:#ffe9b8;font-size:14px">
+      <option value="">— Đang tải playlist… —</option>
+    </select>
+    <div class="grid"><button id="btnDpPlay">▶ Phát đoạn đã chọn</button></div>
+    <div id="dpNow" style="margin-top:10px;background:#170f08;border:1px solid #55401c;border-radius:8px;padding:10px;font-size:13px;min-height:36px">Đài phát đang tắt.</div>
     <label class="chk"><input type="checkbox" id="bcMode"> Gửi lệnh qua BroadcastChannel (điều khiển tab phát sóng riêng đang mở)</label>
     <div id="log">Đang chờ trang phát tải xong…</div>
   </div>
@@ -75,8 +97,62 @@ let seq = 0;
 const pending = new Map();
 if (bc) bc.onmessage = (ev) => {
   const d = ev.data || {};
+  if (d.type === 'daiPhatState' && d.state) { dpShowState(d.state); return; } /* v0.1.25: room pushes now-playing */
   if (d.id && pending.has(d.id)) { pending.get(d.id)(d.result); pending.delete(d.id); }
 };
+/* ---------- Dai Phat (#29): now-playing display + picker ---------- */
+const dpNowEl = document.getElementById('dpNow');
+const KIND_VN = { welcome: 'Lời chào', life: 'Đời sống', sutra: 'Kinh nhẹ', breath: 'Hướng dẫn thở', remind: 'Nhắc tương tác', close: 'Lời kết' };
+function dpShowState(s) {
+  if (!s) return;
+  if (!s.on) { dpNowEl.textContent = 'Đài phát đang tắt.'; return; }
+  const gapMin = Math.round(s.gap / 60 * 10) / 10;
+  if (s.playingTitle) dpNowEl.textContent = '🔊 Đang đọc: ' + s.playingTitle.replace(/-/g, ' ') + ' (' + (KIND_VN[s.playingKind] || s.playingKind) + ') — nhạc nền đã nhỏ xuống. Nghỉ giữa các đoạn: ' + gapMin + ' phút.';
+  else if (s.audioBlocked) dpNowEl.textContent = '⚠ Đài đã bật nhưng trình duyệt chặn tự phát âm thanh — chạm vào trang phát một lần rồi bật lại.';
+  else dpNowEl.textContent = '🎵 Nhạc nền thiền — đoạn đọc tiếp theo sau ' + gapMin + ' phút. Nhạc nền: ' + (s.bed === 'file' ? 'Infinite Peace (FreePD, CC0)' : s.bed === 'pad' ? 'pad tự sinh (dự phòng)' : 'chưa có') + '.';
+}
+/* call() returns nothing (it only logs) — so the Dai Phat buttons use
+   this wrapper that reads the state back after every command. */
+async function dpCmd(cmd, args) {
+  await call(cmd, args);
+  const a = api();
+  if (!document.getElementById('bcMode').checked && a && a.daiPhatState) {
+    try { dpShowState(await a.daiPhatState()); } catch (e) {}
+  }
+}
+document.getElementById('btnDpOn').onclick = () => dpCmd('daiPhatOn', []);
+document.getElementById('btnDpOff').onclick = () => dpCmd('daiPhatOff', []);
+document.getElementById('btnDpNext').onclick = () => dpCmd('daiPhatNext', []);
+document.getElementById('btnDpClose').onclick = () => dpCmd('daiPhatClose', []);
+document.getElementById('dpGap').onchange = (e) => dpCmd('daiPhatGap', [parseInt(e.target.value, 10)]);
+document.getElementById('btnDpPlay').onclick = () => {
+  const v = document.getElementById('dpPicker').value;
+  if (v === '') { log('daiPhatPlay: chưa chọn đoạn đọc'); return; }
+  dpCmd('daiPhatPlay', [parseInt(v, 10)]);
+};
+fetch('playlist.json', { cache: 'no-store' }).then((r) => r.json()).then((pl) => {
+  const sel = document.getElementById('dpPicker');
+  sel.innerHTML = '';
+  pl.forEach((p, i) => {
+    const o = document.createElement('option');
+    o.value = String(i);
+    o.textContent = String(i).padStart(2, '0') + ' — ' + p.title.replace(/-/g, ' ') + ' (' + (KIND_VN[p.kind] || p.kind) + ')';
+    sel.appendChild(o);
+  });
+}).catch(() => {
+  document.getElementById('dpPicker').innerHTML = '<option value="">— Chưa tải được playlist —</option>';
+});
+/* Quiet poll every 3 s (both modes): a direct BroadcastChannel request
+   for daiPhatState, answered by the room page's command listener.
+   bcMode also gets proactive pushes; iframe mode gets both. */
+function dpPollQuiet() {
+  if (!bc) return;
+  const id = 'dp' + (++seq);
+  const to = setTimeout(() => { if (pending.has(id)) pending.delete(id); }, 3000);
+  pending.set(id, (res) => { clearTimeout(to); if (res) dpShowState(res); });
+  try { bc.postMessage({ cmd: 'daiPhatState', args: [], id }); } catch (e) {}
+}
+setInterval(dpPollQuiet, 3000);
 function log(msg) {
   const t = new Date().toLocaleTimeString();
   logEl.textContent = '[' + t + '] ' + msg + '\n' + (logEl.textContent === 'Đang chờ trang phát tải xong…' ? '' : logEl.textContent);

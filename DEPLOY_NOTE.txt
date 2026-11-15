@@ -1,2 +1,8 @@
-Phong Live v0.1.1 - test deployment 2026-11-12
-Verified PASS by Cuu (issue #9, ai-work-orders). Test link only, pending Anita review.
+Phong Live v0.1.25-broadcast - test deployment 2026-11-15
+Broadcast mode (#29): Dai Phat audio embedded in the room page (index.html)
+- voice playlist.json + audio/00..20.mp3 (Mica #28), bed audio/bed.mp3
+  ("Infinite Peace", FreePD CC0, 50 s seamless loop).
+- Remote control from control.html: daiPhatOn / daiPhatOff / daiPhatNext /
+  daiPhatPlay / daiPhatClose / daiPhatGap, plus piece picker + now-playing.
+- dai-phat.html untouched (standalone fallback). sw cache-28.
+Verified PASS by Cuu (issue #29, ai-work-orders). Test link only, pending Anita review.

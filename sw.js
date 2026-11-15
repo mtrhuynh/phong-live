@@ -1,8 +1,9 @@
 /* Phong Live service worker: cache the app shell and models on first visit
    so the hall reopens fast and full-screen from the home screen. */
-const CACHE = 'phong-live-cache-27'; /* dai-phat */
+const CACHE = 'phong-live-cache-28'; /* v0.1.25 broadcast: Dai Phat bed + playlist */
 const CORE = [
   'index.html', 'control.html', 'dai-phat.html', 'xam-data.js',
+  'playlist.json', 'audio/bed.mp3',
   'ARTWORK_tranh-nen-ban-tho_v3.webp',
   'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
   'vendor/three.module.js',
@@ -22,6 +23,11 @@ self.addEventListener('activate', (e) => {
 });
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
+  /* v0.1.25 (#29): media elements fetch with a Range header. Serving a
+     cached FULL response to a range request stalls <audio> forever
+     (verified headless: bed.mp3 stuck at readyState 0 under the SW,
+     loads in ~1 s with this bypass). Ranges always go to the network. */
+  if (e.request.headers.get('range')) return;
   e.respondWith(caches.match(e.request, { ignoreSearch: true }).then((hit) => {
     if (hit) return hit;
     return fetch(e.request).then((res) => {
