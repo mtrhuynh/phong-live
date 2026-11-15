@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Đài Phát — Phòng Live</title>
+<style>
+  body { margin:0; background:#171310; color:#e8dcc8; font-family: Georgia, 'Times New Roman', serif;
+         display:flex; min-height:100vh; align-items:center; justify-content:center; }
+  .wrap { max-width:560px; width:92%; text-align:center; padding:32px 0 48px; }
+  h1 { font-size:26px; font-weight:normal; letter-spacing:2px; color:#d9b45c; margin:0 0 6px; }
+  .sub { color:#9a8a72; font-size:14px; margin-bottom:28px; }
+  #status { font-size:19px; min-height:28px; margin:18px 0 4px; color:#f0e6d2; }
+  #detail { font-size:14px; color:#9a8a72; min-height:20px; margin-bottom:22px; }
+  button { background:#3a2a1a; color:#e8dcc8; border:1px solid #6b4e2a; border-radius:8px;
+           padding:12px 22px; font-size:16px; cursor:pointer; margin:4px; font-family:inherit; }
+  button:hover { background:#4a3520; }
+  button.main { background:#7e1f16; border-color:#a03a28; font-size:18px; padding:14px 34px; }
+  button.main:hover { background:#8c241a; }
+  .row { margin:14px 0; font-size:14px; color:#bfae90; }
+  input[type=range] { width:150px; vertical-align:middle; }
+  select { background:#2a2018; color:#e8dcc8; border:1px solid #6b4e2a; border-radius:6px; padding:6px; font-family:inherit; }
+  .note { margin-top:30px; font-size:13px; color:#77694f; line-height:1.6; text-align:left; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ĐÀI PHÁT — PHÒNG LIVE</h1>
+  <div class="sub">Nhạc nền thiền + giọng đọc của kênh, luân phiên tự động</div>
+  <button class="main" id="btnStart">▶ Bắt đầu phát</button>
+  <div id="status">Chưa phát</div>
+  <div id="detail"></div>
+  <div>
+    <button id="btnNext">⏭ Đọc đoạn tiếp ngay</button>
+    <button id="btnClose">🌙 Phát lời kết buổi</button>
+  </div>
+  <div class="row">Nghỉ giữa các đoạn đọc:
+    <select id="selGap">
+      <option value="120">2 phút nhạc</option>
+      <option value="180" selected>3 phút nhạc</option>
+      <option value="300">5 phút nhạc</option>
+    </select>
+  </div>
+  <div class="row">Nhạc nền <input type="range" id="volMusic" min="0" max="100" value="55">
+    &nbsp; Giọng đọc <input type="range" id="volVoice" min="0" max="100" value="100"></div>
+  <div class="note">
+    Cách dùng khi live: mở trang này trong một cửa sổ Chrome riêng, bấm Bắt đầu phát,
+    rồi trong TikTok LIVE Studio chọn nguồn âm thanh là cửa sổ này (hoặc âm thanh hệ thống).
+    Giữ nguyên tab này suốt buổi. Đài tự luân phiên: nhạc → một đoạn đời sống → nhạc →
+    một đoạn kinh nhẹ → nhạc → hướng dẫn thở; đoạn nhắc gõ chữ phát lặp lại theo chu kỳ.
+    Lời kết chỉ phát khi bấm nút 🌙.
+  </div>
+</div>
+<audio id="voice" preload="auto"></audio>
+<script>
+'use strict';
+/* Dai Phat — broadcast engine for Phong Live.
+   Music: generative WebAudio pad + soft bells (no audio files, no licensing).
+   Voice: Anita's own recordings, listed in playlist.json as
+   [{ "file": "audio/00.mp3", "title": "...", "kind": "welcome|life|sutra|breath|remind|close" }].
+   Rotation: welcome once -> [music gap -> life -> gap -> sutra -> gap -> life -> gap ->
+   breath] repeating; remind inserted every ~4 readings; close only by button. */
+const $ = (id) => document.getElementById(id);
+const voice = $('voice');
+let playlist = [], started = false, paused = false;
+let lifeQueue = [], sutraQueue = [], cycleStep = 0, readingsDone = 0;
+let gapTimer = null, gapEndsAt = 0, currentItem = null;
+
+/* ---------- generative music ---------- */
+let AC = null, musicGain = null, bellTimer = null, chordTimer = null;
+const CHORDS = [ /* frequencies: Cmaj7, Am7, Fmaj7, G6 (low, warm) */
+  [130.81, 196.00, 246.94, 329.63], [110.00, 164.81, 261.63, 329.63],
+  [87.31, 174.61, 220.00, 261.63],  [98.00, 196.00, 246.94, 293.66] ];
+const BELLS = [523.25, 587.33, 659.25, 783.99, 880.00];
+let chordIdx = 0;
+function startMusic() {
+  AC = new (window.AudioContext || window.webkitAudioContext)();
+  musicGain = AC.createGain(); musicGain.gain.value = musicLevel();
+  const comp = AC.createDynamicsCompressor();
+  musicGain.connect(comp); comp.connect(AC.destination);
+  playChord(); chordTimer = setInterval(playChord, 9000);
+  scheduleBell();
+}
+function musicLevel() { return (parseInt($('volMusic').value, 10) / 100) * 0.24; }
+function playChord() {
+  if (!AC) return;
+  const now = AC.currentTime, chord = CHORDS[chordIdx++ % CHORDS.length];
+  chord.forEach((f, i) => {
+    [0, 1.5].forEach((det) => {
+      const o = AC.createOscillator(), g = AC.createGain(), fl = AC.createBiquadFilter();
+      o.type = i < 2 ? 'sine' : 'triangle'; o.frequency.value = f; o.detune.value = det;
+      fl.type = 'lowpass'; fl.frequency.value = 900;
+      g.gain.setValueAtTime(0, now);
+      g.gain.linearRampToValueAtTime(0.05 - i * 0.007, now + 3.2);
+      g.gain.linearRampToValueAtTime(0.0001, now + 9.4);
+      o.connect(fl); fl.connect(g); g.connect(musicGain);
+      o.start(now); o.stop(now + 9.6);
+    });
+  });
+}
+function scheduleBell() {
+  bellTimer = setTimeout(() => {
+    if (AC && !paused) {
+      const now = AC.currentTime, f = BELLS[Math.floor(Math.random() * BELLS.length)];
+      const o = AC.createOscillator(), g = AC.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.028, now);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 2.8);
+      o.connect(g); g.connect(musicGain); o.start(now); o.stop(now + 3);
+    }
+    scheduleBell();
+  }, 7000 + Math.random() * 9000);
+}
+function duck(on) {
+  if (!AC || !musicGain) return;
+  const target = on ? musicLevel() * 0.25 : musicLevel();
+  musicGain.gain.cancelScheduledValues(AC.currentTime);
+  musicGain.gain.linearRampToValueAtTime(target, AC.currentTime + 1.2);
+}
+
+/* ---------- voice rotation ---------- */
+function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function refill() {
+  if (!lifeQueue.length) lifeQueue = shuffle(playlist.filter(p => p.kind === 'life').slice());
+  if (!sutraQueue.length) sutraQueue = shuffle(playlist.filter(p => p.kind === 'sutra').slice());
+}
+function setStatus(main, detail) { $('status').textContent = main; $('detail').textContent = detail || ''; }
+function playItem(item) {
+  if (!item) { scheduleGap(); return; }
+  currentItem = item; refill();
+  voice.src = item.file; voice.volume = parseInt($('volVoice').value, 10) / 100;
+  duck(true);
+  voice.play().then(() => setStatus('🔊 Đang đọc: ' + item.title, 'Nhạc nền đã nhỏ xuống dưới giọng đọc.'))
+    .catch((e) => { scheduleGap(5); setStatus('⚠ Không phát được: ' + item.title, (e && e.name === 'NotAllowedError') ? 'Trình duyệt chặn tự phát — bấm nút Bắt đầu phát một lần nữa.' : 'Bỏ qua, đài tự chuyển đoạn tiếp.'); });
+}
+voice.addEventListener('ended', () => { duck(false); readingsDone++; scheduleGap(); });
+voice.addEventListener('error', () => { if (started && currentItem) { duck(false); scheduleGap(5); } });
+function scheduleGap(seconds) {
+  const gap = seconds || parseInt($('selGap').value, 10);
+  gapEndsAt = Date.now() + gap * 1000;
+  setStatus('🎵 Nhạc nền thiền', 'Đoạn đọc tiếp theo sau ' + Math.round(gap / 60 * 10) / 10 + ' phút…');
+  clearTimeout(gapTimer);
+  gapTimer = setTimeout(nextReading, gap * 1000);
+}
+function nextReading() {
+  if (!started || paused) return;
+  refill();
+  if (readingsDone > 0 && readingsDone % 4 === 3) {
+    const r = playlist.find(p => p.kind === 'remind');
+    if (r) { playItem(r); return; }
+  }
+  const step = cycleStep++ % 4;
+  if (step === 3) { const b = playlist.find(p => p.kind === 'breath'); if (b) { playItem(b); return; } }
+  playItem(step % 2 === 0 ? lifeQueue.shift() : (sutraQueue.shift() || lifeQueue.shift()));
+}
+setInterval(() => { /* countdown display */
+  if (started && !paused && !currentItemPlaying() && gapEndsAt) {
+    const s = Math.max(0, Math.round((gapEndsAt - Date.now()) / 1000));
+    if (s) $('detail').textContent = 'Đoạn đọc tiếp theo sau ' + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0') + ' (nhạc nền)';
+  }
+}, 1000);
+function currentItemPlaying() { return !voice.paused && !voice.ended && voice.src; }
+
+/* ---------- controls ---------- */
+$('btnStart').addEventListener('click', async () => {
+  if (!started) {
+    try { playlist = await (await fetch('playlist.json', { cache: 'no-store' })).json(); }
+    catch (e) { playlist = []; }
+    started = true; $('btnStart').textContent = '⏸ Tạm dừng';
+    startMusic();
+    const welcome = playlist.find(p => p.kind === 'welcome');
+    if (welcome) playItem(welcome);
+    else if (playlist.length) { setStatus('🎵 Nhạc nền thiền', 'Chưa có lời chào — vào thẳng vòng đọc.'); scheduleGap(20); }
+    else setStatus('🎵 Nhạc nền thiền', 'Chưa có file giọng đọc — đài đang phát nhạc nền thuần.');
+  } else if (!paused) {
+    paused = true; voice.pause(); if (AC) AC.suspend();
+    clearTimeout(gapTimer); $('btnStart').textContent = '▶ Phát tiếp'; setStatus('⏸ Đã tạm dừng', '');
+  } else {
+    paused = false; if (AC) AC.resume();
+    $('btnStart').textContent = '⏸ Tạm dừng';
+    if (currentItem && voice.src && !voice.ended) { voice.play(); duck(true); setStatus('🔊 Đang đọc: ' + currentItem.title, ''); }
+    else scheduleGap(3);
+  }
+});
+$('btnNext').addEventListener('click', () => {
+  if (!started) return;
+  clearTimeout(gapTimer);
+  if (currentItemPlaying()) { voice.pause(); voice.currentTime = 0; }
+  duck(false); nextReading();
+});
+$('btnClose').addEventListener('click', () => {
+  const c = playlist.find(p => p.kind === 'close');
+  if (c && started) { clearTimeout(gapTimer); playItem(c); }
+});
+$('volMusic').addEventListener('input', () => { if (musicGain && AC) musicGain.gain.linearRampToValueAtTime(currentItemPlaying() ? musicLevel() * 0.25 : musicLevel(), AC.currentTime + 0.3); });
+$('volVoice').addEventListener('input', () => { voice.volume = parseInt($('volVoice').value, 10) / 100; });
+window.DaiPhat = { state: () => ({ started, paused, readingsDone, cycleStep, items: playlist.length, playing: currentItemPlaying() ? (currentItem && currentItem.title) : null }) };
+</script>
+</body>
+</html>
