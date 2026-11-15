@@ -319,12 +319,23 @@ box(ROOM.W, 0.7, 0.8, MAT.woodRed, 0, 10.6, 15, scene);
 
 /* Lanterns: squashed glowing spheres, gold caps, red tassels. Only two carry
    real point lights; the rest are emissive (keeps phones/stream PCs smooth). */
+/* v0.1.16: lantern glow — a warm halo sprite around EVERY lantern (Phong
+   Thien lampGlowMat formula). No new real lights: the 2 PointLights stay
+   the only ones, so live/stream PCs and phones stay smooth. */
+const lanternGlowTex = canvasTexture(128, 128, (g) => {
+  const gr = g.createRadialGradient(64, 64, 2, 64, 64, 62);
+  gr.addColorStop(0, 'rgba(255,190,90,0.85)'); gr.addColorStop(1, 'rgba(255,150,40,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+});
 const lanternFlames = [];
+const lanternGlows = [];
 function lantern(x, y, z, withLight) {
   const g = new THREE.Group(); g.position.set(x, y, z); scene.add(g);
   const body = new THREE.Mesh(new THREE.SphereGeometry(0.42, 18, 14),
     new THREE.MeshStandardMaterial({ color: 0xd43a24, emissive: 0xff7a30, emissiveIntensity: 0.85, roughness: 0.6 }));
   body.scale.y = 0.82; g.add(body);
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: lanternGlowTex, color: 0xffb45e, transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending }));
+  glow.scale.set(1.6, 1.6, 1); g.add(glow); lanternGlows.push(glow);
   cyl(0.16, 0.2, 0.1, MAT.gold, 0, 0.4, 0, g, 10);
   cyl(0.05, 0.09, 0.34, MAT.woodRed, 0, -0.52, 0, g, 8);
   const cord = cyl(0.016, 0.016, ROOM.H - y - 0.4, MAT.woodDark, 0, (ROOM.H - y) / 2 + 0.2, 0, g, 6);
@@ -440,9 +451,89 @@ box(23.9, 2.7, 0.1, MAT.woodDark, 0, 10.65, -14.9, scene);
    v0.1.7: 2x at 3.0 m (was 1.5 m) per the measured ratios (Trang
    2026-11-12) — the 4.5 m burner in v0.1.6 hid the statue from the
    chest down in the 9:16 stream view. */
-const burner = loadFitted('models/burner.glb', 3.0);
+let burnerMouthY = null; /* v0.1.16: measured mouth height (wrap-local), set in onReady */
+let burnerFx = null;     /* v0.1.16: smoke/stick/flame group, anchored at the mouth */
+const burner = loadFitted('models/burner.glb', 3.0, (wrap, m) => {
+  /* Anchor the smoke at the burner's real mouth, measured from the fitted
+     model itself (base y=0, exactly 3.0 m tall; mouth = model bbox top
+     - 0.15 so the sticks sit inside the opening). Fallback 2.85 m if the
+     GLB fails and the placeholder block is used instead. */
+  let mouthY = 2.85;
+  if (m) {
+    try {
+      wrap.updateMatrixWorld(true);
+      mouthY = Math.max(0.5, new THREE.Box3().setFromObject(m).max.y - wrap.position.y - 0.15);
+    } catch (e) {}
+  }
+  burnerMouthY = mouthY;
+  if (burnerFx) burnerFx.position.y = mouthY;
+  console.log('[v0.1.16] burner mouth local y =', mouthY.toFixed(2));
+});
 burner.position.set(0, 0.45, -10.75);
 scene.add(burner);
+/* v0.1.16: burning incense on the burner — the Phong Thien smoke formula
+   (smokeTex + 16 rising sprites + ember sticks + flame glow + warm light),
+   burning CONTINUOUSLY (a live background: no light-incense button, not
+   the 180 s counter). All children of burnerFx sit relative to the mouth
+   (fx origin = mouth height, set in the loadFitted onReady above). */
+const burnerSmokeTex = canvasTexture(128, 128, (g) => {
+  const gr = g.createRadialGradient(64, 64, 4, 64, 64, 62);
+  gr.addColorStop(0, 'rgba(205,205,218,0.65)'); /* v0.1.16: cooler/darker than Phong Thien's near-white (235) so the wisp reads against Phong Live's bright gold painting instead of washing out */
+  gr.addColorStop(0.6, 'rgba(195,195,210,0.28)');
+  gr.addColorStop(1, 'rgba(190,190,205,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+});
+const burnerFlameTex = canvasTexture(128, 128, (g) => {
+  const gr = g.createRadialGradient(64, 58, 2, 64, 64, 62);
+  gr.addColorStop(0, 'rgba(255,246,216,1)');
+  gr.addColorStop(0.35, 'rgba(255,214,110,0.85)');
+  gr.addColorStop(0.7, 'rgba(255,150,40,0.38)');
+  gr.addColorStop(1, 'rgba(232,120,12,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+});
+const burnerFlameDrawTex = canvasTexture(128, 256, (g) => {
+  const gr = g.createRadialGradient(64, 196, 6, 64, 156, 118);
+  gr.addColorStop(0, 'rgba(255,248,205,0.95)');
+  gr.addColorStop(0.35, 'rgba(255,196,84,0.78)');
+  gr.addColorStop(0.7, 'rgba(255,116,32,0.34)');
+  gr.addColorStop(1, 'rgba(255,84,20,0)');
+  g.fillStyle = gr;
+  g.beginPath();
+  g.moveTo(64, 4);
+  g.bezierCurveTo(97, 92, 114, 142, 114, 184);
+  g.bezierCurveTo(114, 228, 93, 250, 64, 250);
+  g.bezierCurveTo(35, 250, 14, 228, 14, 184);
+  g.bezierCurveTo(14, 142, 31, 92, 64, 4);
+  g.fill();
+});
+burnerFx = new THREE.Group(); burner.add(burnerFx);
+const burnerStickMat = new THREE.MeshStandardMaterial({ color: 0x9a4a30, roughness: 0.8 });
+const burnerEmberMat = new THREE.MeshStandardMaterial({ color: 0xff5a26, emissive: 0xff4400, emissiveIntensity: 2.2 });
+for (let i = 0; i < 7; i++) {
+  const sx = (Math.random() - 0.5) * 0.8, sz = (Math.random() - 0.5) * 0.8;
+  cyl(0.016, 0.016, 0.85, burnerStickMat, sx, 0.275, sz, burnerFx, 6);
+  const tip = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 8), burnerEmberMat);
+  tip.position.set(sx, 0.7, sz); burnerFx.add(tip);
+}
+const burnerSmokes = [];
+for (let i = 0; i < 16; i++) {
+  const sm = new THREE.SpriteMaterial({ map: burnerSmokeTex, transparent: true, opacity: 0, depthWrite: false });
+  const sp = new THREE.Sprite(sm);
+  sp.userData.ph = i / 16;
+  burnerFx.add(sp); burnerSmokes.push(sp);
+}
+const burnerGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: burnerFlameTex, transparent: true, opacity: 0.95, depthWrite: false }));
+burnerGlow.scale.set(1.02, 0.72, 1); burnerGlow.position.y = 0.72; burnerFx.add(burnerGlow);
+const burnerLight = new THREE.PointLight(0xff8c4a, 2.5, 5, 1.8); burnerLight.position.y = 0.75; burnerFx.add(burnerLight);
+const burnerFlame = new THREE.Group(); burnerFlame.position.y = 0.71; burnerFx.add(burnerFlame);
+{
+  const fm = new THREE.MeshBasicMaterial({ map: burnerFlameDrawTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+  for (let i = 0; i < 2; i++) {
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(0.36, 0.66), fm);
+    p.position.y = 0.30; p.rotation.y = i * Math.PI / 2; burnerFlame.add(p);
+  }
+  burnerFlame.scale.setScalar(0.25);
+}
 /* Candle stands + offering bowls flanking the burner. */
 const flameMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
 [-1.9, 1.9].forEach((x) => {
@@ -611,11 +702,11 @@ function nameSprite(name) {
   sp.scale.set(1.9, 0.475, 1);
   return sp;
 }
-function makeActor(name, seat) {
+function makeActor(name, seat, isFake) {
   const group = new THREE.Group(); scene.add(group);
   const body = new THREE.Group(); group.add(body);
   const actor = {
-    name, seat, group, body, busy: false, seated: false, dead: false,
+    name, seat, group, body, busy: false, seated: false, dead: false, isFake: !!isFake,
     phase: Math.random() * Math.PI * 2, tint: ROBE_TINTS[seats.indexOf(seat) % ROBE_TINTS.length],
     tag: nameSprite(name),
   };
@@ -688,22 +779,86 @@ function seatEntryPoints(seat) { return [seat.x, seat.z + 1.15]; }
    central carpet axis. */
 function aisleX(seat) { return seat.x >= 0 ? 6.0 : -6.0; }
 
-async function doAddPhatTu(name) {
-  name = String(name || '').trim();
-  if (!name) return { ok: false, loi: 'thieu ten' };
-  if (actors.has(name)) return { ok: false, loi: 'da co trong phong', ghe: actors.get(name).seat.code };
-  const seat = seats.find((s) => !s.actor);
-  if (!seat) return { ok: false, loi: 'het ghe' };
-  const actor = makeActor(name, seat);
-  seat.actor = actor; actor.busy = true; actors.set(name, actor);
+/* Walk an actor in from the door to a seat and sit them down. */
+async function walkInActor(actor, seat) {
   actor.group.position.set(0, 0, 15.9);
   actor.group.rotation.y = Math.PI;
   await walkPath(actor, [[aisleX(seat), 13.8], [aisleX(seat), seat.z + 1.15], seatEntryPoints(seat), [seat.x, seat.z]], 2.2);
   await faceToward(actor, 0, -1, 0.4);
   actor.group.position.y = 0.16;
   await sitDown(actor);
+}
+/* Walk an actor out of their seat to the door and remove them from the room. */
+async function walkOutActor(actor) {
+  const seat = actor.seat;
+  actor.group.position.y = 0;
+  await standUp(actor);
+  await walkPath(actor, [seatEntryPoints(seat), [aisleX(seat), seat.z + 1.15], [aisleX(seat), 13.8], [0, 15.9]], 2.2);
+  actor.dead = true;
+  scene.remove(actor.group);
+  seat.actor = null; actors.delete(actor.name);
+}
+/* v0.1.16: the fake in the back-most row (row 6 -> 5 -> 4 -> 3, then lowest
+   seat index in that row) — the one a real viewer replaces first, so the
+   front rows by the Buddha stay full longest. Busy / out-bowing fakes are
+   never yielded. */
+function backMostFakeSeat() {
+  let best = null;
+  for (const s of seats) {
+    if (!s.actor || !s.actor.isFake || s.actor.busy) continue;
+    if (nguoiDangLay === s.actor.name) continue;
+    if (!best || s.z > best.z || (s.z === best.z && seats.indexOf(s) < seats.indexOf(best))) best = s;
+  }
+  return best;
+}
+/* Spare fake names for re-seeding a seat that never held a fake (a real
+   viewer who sat in a free seat). The yielded fake's own name is preferred. */
+const SPARE_FAKE_NAMES = ['Diệu Tâm', 'Thiện Đức', 'Phúc An', 'Tuệ An', 'Quang Tâm', 'An Hòa', 'Thiện Minh', 'Diệu An', 'Phúc Tâm', 'Tuệ Đức', 'Quang An', 'Thiện An'];
+let spareFakeIdx = 0;
+function nextSpareFakeName() {
+  for (let k = 0; k < SPARE_FAKE_NAMES.length; k++) {
+    const n = SPARE_FAKE_NAMES[spareFakeIdx % SPARE_FAKE_NAMES.length];
+    spareFakeIdx++;
+    if (!actors.has(n)) return n;
+  }
+  return null;
+}
+/* v0.1.16: seat a fake back into a seat a real viewer just left, so the
+   room always looks full. Fire-and-forget: the caller has already returned
+   by the time the fake walks in (the viewer has cleared the aisle first). */
+async function reseedFake(seat) {
+  if (seat.actor) return; /* someone sat down meanwhile */
+  const name = seat.yieldedName && !actors.has(seat.yieldedName) ? seat.yieldedName : nextSpareFakeName();
+  if (!name) return;
+  const actor = makeActor(name, seat, true);
+  seat.actor = actor; actor.busy = true; actors.set(name, actor);
+  await walkInActor(actor, seat);
   actor.busy = false;
-  return { ok: true, ghe: seat.code };
+}
+async function doAddPhatTu(name) {
+  name = String(name || '').trim();
+  if (!name) return { ok: false, loi: 'thieu ten' };
+  if (actors.has(name)) return { ok: false, loi: 'da co trong phong', ghe: actors.get(name).seat.code };
+  /* v0.1.16: a real viewer FIRST yields a fake — the back-most fake stands
+     up and walks out, and the viewer walks in and sits in that exact seat,
+     so real and fake stay interleaved and the room always looks full.
+     Only when no fake is left to yield does the viewer take the lowest
+     free seat. */
+  let seat = backMostFakeSeat();
+  let yieldedName = null;
+  if (seat) {
+    yieldedName = seat.actor.name;
+    seat.yieldedName = yieldedName;
+    await walkOutActor(seat.actor);
+  } else {
+    seat = seats.find((s) => !s.actor);
+  }
+  if (!seat) return { ok: false, loi: 'het ghe' };
+  const actor = makeActor(name, seat, false);
+  seat.actor = actor; actor.busy = true; actors.set(name, actor);
+  await walkInActor(actor, seat);
+  actor.busy = false;
+  return { ok: true, ghe: seat.code, thay: yieldedName };
 }
 async function doRemovePhatTu(name) {
   const actor = actors.get(String(name || '').trim());
@@ -712,12 +867,12 @@ async function doRemovePhatTu(name) {
   if (actor.busy) return { ok: false, loi: 'dang ban' };
   actor.busy = true;
   const seat = actor.seat;
-  actor.group.position.y = 0;
-  await standUp(actor);
-  await walkPath(actor, [seatEntryPoints(seat), [aisleX(seat), seat.z + 1.15], [aisleX(seat), 13.8], [0, 15.9]], 2.2);
-  actor.dead = true;
-  scene.remove(actor.group);
-  seat.actor = null; actors.delete(actor.name);
+  const wasFake = actor.isFake;
+  await walkOutActor(actor);
+  /* v0.1.16: when a REAL viewer leaves, a fake returns to that seat
+     (the fake who yielded it, or the next spare name). A fake leaving on
+     its own is not re-seeded. */
+  if (!wasFake) reseedFake(seat);
   return { ok: true, ghe: seat.code };
 }
 /* Walk back from wherever the devotee is standing out (bow point or the
@@ -804,7 +959,7 @@ async function doXinXam(name) {
 }
 function doTrangThai() {
   return {
-    ghe: seats.map((s) => ({ ghe: s.code, nguoi: s.actor ? s.actor.name : null })),
+    ghe: seats.map((s) => ({ ghe: s.code, nguoi: s.actor ? s.actor.name : null, gia: s.actor ? !!s.actor.isFake : null })),
     nguoiDangLay: nguoiDangLay,
     queGanNhat: lastQue,
     thienNhom: deepMeditation,
@@ -869,11 +1024,28 @@ addEventListener('message', (ev) => {
   });
 });
 
-/* ---------- seed congregation: twelve devotees already seated ----------
-   Front two rows of each side bank: G01–G06 (left) + G22–G27 (right). */
-['Minh An', 'Thanh Tam', 'Dieu Am', 'Dieu Huong', 'Tinh Tam', 'Hanh Nguyen', 'Phuc Lam', 'Tue Nhi', 'Quang Minh', 'An Lac', 'Thien Duyen', 'Phuoc Hue'].forEach((name, i) => {
-  const seat = seats[[0, 1, 2, 3, 4, 5, 21, 22, 23, 24, 25, 26][i]];
-  const actor = makeActor(name, seat);
+/* ---------- seed congregation: twenty-four fake devotees already seated ----------
+   v0.1.16 (Trang 2026-11-15): names in Vietnamese WITH diacritics, and 12
+   more fakes at the yellow-marked cushions (rows 3-6, staggered) — front
+   two rows G01-G06 + G22-G27, plus G07, G08, G11, G12, G14, G18 (left)
+   and G28, G30, G32, G33, G35, G39 (right). All seeded actors are fake
+   (isFake) so a real viewer can yield them, back row first.
+   v0.1.17 (Trang 2026-11-15 16:06): 7 of the new fakes re-seated to the
+   MOST VISIBLE seats — inner column (|x| 3.0, hugging the red carpet),
+   foreground rows 4-6 — because v0.1.16 showed only 17/24 in the 9:16
+   frame (outer columns + back rows fall outside it). Moved: G12->G10,
+   G14->G13, G18->G16, G30->G29, G33->G31, G35->G34, G39->G37. New fakes
+   now at G07, G08, G10, G11, G13, G16 (left) and G28, G29, G31, G32,
+   G34, G37 (right) — all 24 in frame by projection. */
+const SEED_FAKE = [
+  [0, 'Minh Ân'], [1, 'Thanh Tâm'], [2, 'Diệu Âm'], [3, 'Diệu Hương'], [4, 'Tịnh Tâm'], [5, 'Hạnh Nguyên'],
+  [6, 'Diệu Pháp'], [7, 'Thiện Tâm'], [10, 'Phúc Đức'], [9, 'Tuệ Minh'], [12, 'An Nhiên'], [15, 'Diệu Liên'],
+  [21, 'Phúc Lâm'], [22, 'Tuệ Nhi'], [23, 'Quang Minh'], [24, 'An Lạc'], [25, 'Thiện Duyên'], [26, 'Phước Huệ'],
+  [27, 'Thiện Phước'], [28, 'Quang Đức'], [31, 'Tịnh An'], [30, 'Diệu Ngọc'], [33, 'Phúc An'], [36, 'Thiện Hạnh'],
+];
+SEED_FAKE.forEach(([si, name]) => {
+  const seat = seats[si];
+  const actor = makeActor(name, seat, true);
   seat.actor = actor; actors.set(name, actor);
   actor.group.position.set(seat.x, 0.16, seat.z);
   actor.group.rotation.y = Math.PI;
@@ -905,6 +1077,25 @@ function animate() {
     s.ring.material.opacity = lerp(s.ring.material.opacity, target, dt * 2);
   }
   lanternFlames.forEach((l, i) => { l.intensity = 13 + Math.sin(elapsed * 7 + i * 2.4) * 2.2; });
+  lanternGlows.forEach((gl, i) => { gl.material.opacity = 0.5 + Math.sin(elapsed * 2.1 + i * 1.7) * 0.13; });
+  /* v0.1.16: burner smoke, continuous (Phong Thien formula: rise, sway,
+     grow, fade in-out over each sprite's life). */
+  burnerSmokes.forEach((sp, i) => {
+    sp.userData.ph += dt * 0.055;
+    if (sp.userData.ph > 1) sp.userData.ph -= 1;
+    const ph = sp.userData.ph;
+    sp.position.set(Math.sin(ph * 9 + i * 2.4) * 0.22 * ph, 0.75 + ph * 3.1, Math.cos(ph * 7 + i) * 0.18 * ph);
+    const sc = 0.5 + ph * 1.9;
+    sp.scale.set(sc, sc, 1);
+    sp.material.opacity = Math.sin(ph * Math.PI) * 0.6; /* v0.1.16: 0.6 not 0.45 — the Phong Thien yard value reads too faint against Phong Live's bright painting; the hall burner there uses 0.72 */
+  });
+  burnerEmberMat.emissiveIntensity = 1.9 + Math.sin(elapsed * 7.3) * 0.45;
+  {
+    const bf = 0.82 + Math.sin(elapsed * 11 + 3.7 * 7) * 0.12 + Math.sin(elapsed * 23 + 3.7 * 3) * 0.07;
+    burnerLight.intensity = 3.4 * bf;
+    burnerGlow.material.opacity = 0.88 * bf;
+    burnerFlame.scale.setScalar(0.25 * (0.9 + Math.sin(elapsed * 9) * 0.1));
+  }
   altarLight.intensity = 58 + Math.sin(elapsed * 3.1) * 5;
   controls.update();
   renderer.render(scene, camera);
