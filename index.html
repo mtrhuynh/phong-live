@@ -20,11 +20,29 @@
   #loading .spin { font-size:44px; animation:sp 1.6s linear infinite; }
   @keyframes sp { to { transform:rotate(360deg); } }
   #loading.done { opacity:0; pointer-events:none; }
+  /* v0.1.18: participation notice board (Anita's text, self-cultivation
+     wording — never "temple"). Shown/hidden by the bangThongBao command;
+     positioned over the stage by applySize(). */
+  .plboard { position:fixed; z-index:40; display:none; background:rgba(18,9,3,.80);
+    border:1px solid rgba(245,201,94,.55); border-radius:10px; color:#ffe9b8;
+    padding:10px 12px; line-height:1.55; box-shadow:0 2px 14px rgba(0,0,0,.45);
+    font-family:Arial, "Helvetica Neue", sans-serif; }
+  .plboard .pb-title { color:#f5c95e; font-weight:700; letter-spacing:.4px; }
+  .plboard .pb-sub { color:#cbb27f; font-style:italic; }
+  .plboard b { color:#fff2cf; }
 </style>
 </head>
 <body>
 <div id="scene"></div>
 <div id="loading"><div class="spin">🪷</div></div>
+<div id="boardMain" class="plboard">
+  <div class="pb-title">📋 THAM GIA CÙNG PHÒNG</div>
+  <div class="pb-sub">🌿 Một nơi yên tĩnh để tự tu tập</div>
+  <div>⌨️ Gõ <b>"Adidaphat"</b> → vào phòng, đốt nhang</div>
+  <div>🙏 Gõ <b>"lạy"</b> → được gọi ra lạy Phật</div>
+  <div>📜 Gõ <b>"xin quẻ"</b> → xin một quẻ sau khi lạy</div>
+</div>
+<div id="boardPill" class="plboard">Gõ <b>"Adidaphat"</b> để vào phòng</div>
 
 <script src="xam-data.js"></script>
 <script>
@@ -99,11 +117,61 @@ controls.maxDistance = 40;
 controls.target.set(0, 1.0, -4);
 camera.lookAt(controls.target);
 
-addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
+/* v0.1.18 (Anita 2026-11-15): stream frame lock + notice board.
+   khungPhat locks the stage to an exact centered 9:16 — the verified
+   broadcast composition — whatever shape the window is, so nobody has
+   to hand-drag a window to an exact size before going live.
+   bangThongBao shows/hides the participation board. Both are ordinary
+   PhongLive commands (control.html, BroadcastChannel) and persist in
+   localStorage per browser. */
+let streamFrame = false, boardOn = false;
+try {
+  streamFrame = localStorage.getItem('pl-khung-phat') === '1';
+  boardOn = localStorage.getItem('pl-bang') === '1';
+} catch (e) {}
+const boardMain = document.getElementById('boardMain');
+const boardPill = document.getElementById('boardPill');
+function stageRect() {
+  if (!streamFrame) return { x: 0, y: 0, w: innerWidth, h: innerHeight };
+  let h = innerHeight, w = Math.round(h * 9 / 16);
+  if (w > innerWidth) { w = innerWidth; h = Math.round(w * 16 / 9); }
+  return { x: Math.round((innerWidth - w) / 2), y: Math.round((innerHeight - h) / 2), w, h };
+}
+function applySize() {
+  const r = stageRect();
+  const cv = renderer.domElement;
+  cv.style.position = 'absolute';
+  cv.style.left = r.x + 'px'; cv.style.top = r.y + 'px';
+  camera.aspect = r.w / r.h;
   camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-});
+  renderer.setSize(r.w, r.h);
+  const pad = Math.max(8, Math.round(r.w * 0.022));
+  const fs = Math.max(11, Math.round(r.w * 0.031));
+  for (const b of [boardMain, boardPill]) {
+    b.style.display = boardOn ? 'block' : 'none';
+    b.style.fontSize = fs + 'px';
+  }
+  boardMain.style.left = (r.x + pad) + 'px';
+  boardMain.style.top = (r.y + pad) + 'px';
+  boardMain.style.maxWidth = Math.round(r.w * 0.62) + 'px';
+  boardPill.style.top = (r.y + Math.round(r.h * 0.36)) + 'px';
+  boardPill.style.right = (innerWidth - r.x - r.w + pad) + 'px';
+}
+addEventListener('resize', applySize);
+applySize();
+function setKhungPhat(on) {
+  streamFrame = (on === undefined) ? !streamFrame : !!on;
+  try { localStorage.setItem('pl-khung-phat', streamFrame ? '1' : '0'); } catch (e) {}
+  applySize();
+  if (streamFrame) cameraVungPhat();
+  return { ok: true, khungPhat: streamFrame };
+}
+function setBangThongBao(on) {
+  boardOn = (on === undefined) ? !boardOn : !!on;
+  try { localStorage.setItem('pl-bang', boardOn ? '1' : '0'); } catch (e) {}
+  applySize();
+  return { ok: true, bangThongBao: boardOn };
+}
 
 /* ---------- lights ---------- */
 scene.add(new THREE.HemisphereLight(0xffe2b0, 0x5a3a20, 0.85));
@@ -964,6 +1032,8 @@ function doTrangThai() {
     queGanNhat: lastQue,
     thienNhom: deepMeditation,
     vungPhat: STREAM_ZONE,
+    khungPhat: streamFrame,
+    bangThongBao: boardOn,
   };
 }
 
@@ -997,6 +1067,8 @@ window.PhongLive = {
   ngungThien: () => { deepMeditation = false; breathTarget = 1; return { ok: true }; },
   trangThai: () => doTrangThai(),
   cameraToanCanh, cameraVungPhat,
+  khungPhat: (on) => setKhungPhat(on),
+  bangThongBao: (on) => setBangThongBao(on),
   ready: new Promise((res) => readyCallbacks.push(res)),
 };
 /* Debug/diagnostic handle for whoever verifies the build (not a UI). */
