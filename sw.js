@@ -1,6 +1,6 @@
 /* Phong Live service worker: cache the app shell and models on first visit
    so the hall reopens fast and full-screen from the home screen. */
-const CACHE = 'phong-live-cache-26'; /* dai-phat */
+const CACHE = 'phong-live-cache-27'; /* dai-phat */
 const CORE = [
   'index.html', 'control.html', 'dai-phat.html', 'xam-data.js',
   'ARTWORK_tranh-nen-ban-tho_v3.webp',

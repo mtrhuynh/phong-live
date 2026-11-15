@@ -1,1 +1,107 @@
-[]
+[
+  {
+    "file": "audio/00.mp3",
+    "title": "loi-chao-mo-dau",
+    "kind": "welcome"
+  },
+  {
+    "file": "audio/01.mp3",
+    "title": "met-moi",
+    "kind": "life"
+  },
+  {
+    "file": "audio/02.mp3",
+    "title": "dung-so-sanh",
+    "kind": "life"
+  },
+  {
+    "file": "audio/03.mp3",
+    "title": "lam-het-trach-nhiem",
+    "kind": "life"
+  },
+  {
+    "file": "audio/04.mp3",
+    "title": "biet-du",
+    "kind": "life"
+  },
+  {
+    "file": "audio/05.mp3",
+    "title": "bat-dau-lai",
+    "kind": "life"
+  },
+  {
+    "file": "audio/06.mp3",
+    "title": "cha-me-gia",
+    "kind": "life"
+  },
+  {
+    "file": "audio/07.mp3",
+    "title": "buong-tay-voi-con",
+    "kind": "life"
+  },
+  {
+    "file": "audio/08.mp3",
+    "title": "suc-khoe",
+    "kind": "life"
+  },
+  {
+    "file": "audio/09.mp3",
+    "title": "thi-phi",
+    "kind": "life"
+  },
+  {
+    "file": "audio/10.mp3",
+    "title": "biet-on-dieu-nho",
+    "kind": "life"
+  },
+  {
+    "file": "audio/11.mp3",
+    "title": "co-don",
+    "kind": "life"
+  },
+  {
+    "file": "audio/12.mp3",
+    "title": "ngu-ngon",
+    "kind": "life"
+  },
+  {
+    "file": "audio/13.mp3",
+    "title": "kinh-tam-dan-dau",
+    "kind": "sutra"
+  },
+  {
+    "file": "audio/14.mp3",
+    "title": "kinh-han-thu",
+    "kind": "sutra"
+  },
+  {
+    "file": "audio/15.mp3",
+    "title": "kinh-thang-minh",
+    "kind": "sutra"
+  },
+  {
+    "file": "audio/16.mp3",
+    "title": "kinh-loi-noi-va-viec-lam",
+    "kind": "sutra"
+  },
+  {
+    "file": "audio/17.mp3",
+    "title": "kinh-nguoi-tri",
+    "kind": "sutra"
+  },
+  {
+    "file": "audio/18.mp3",
+    "title": "huong-dan-tho",
+    "kind": "breath"
+  },
+  {
+    "file": "audio/19.mp3",
+    "title": "nhac-tuong-tac",
+    "kind": "remind"
+  },
+  {
+    "file": "audio/20.mp3",
+    "title": "loi-chuc-ket",
+    "kind": "close"
+  }
+]
