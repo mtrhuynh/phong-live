@@ -30,6 +30,12 @@
   .plboard .pb-title { color:#f5c95e; font-weight:700; letter-spacing:.4px; }
   .plboard .pb-sub { color:#cbb27f; font-style:italic; }
   .plboard b { color:#fff2cf; }
+  /* v0.1.19: the board is draggable by its body and resizable from the
+     corner grip; the text wraps on its own as the board narrows. */
+  #boardMain { cursor:move; user-select:none; -webkit-user-select:none; touch-action:none; }
+  #boardPill { cursor:move; user-select:none; -webkit-user-select:none; touch-action:none; }
+  #boardMain .pb-grip { position:absolute; right:1px; bottom:0; width:18px; height:18px;
+    cursor:nwse-resize; color:rgba(245,201,94,.85); font-size:12px; line-height:18px; text-align:center; }
 </style>
 </head>
 <body>
@@ -41,6 +47,7 @@
   <div>⌨️ Gõ <b>"Adidaphat"</b> → vào phòng, đốt nhang</div>
   <div>🙏 Gõ <b>"lạy"</b> → được gọi ra lạy Phật</div>
   <div>📜 Gõ <b>"xin quẻ"</b> → xin một quẻ sau khi lạy</div>
+  <div class="pb-grip">⤡</div>
 </div>
 <div id="boardPill" class="plboard">Gõ <b>"Adidaphat"</b> để vào phòng</div>
 
@@ -125,9 +132,13 @@ camera.lookAt(controls.target);
    PhongLive commands (control.html, BroadcastChannel) and persist in
    localStorage per browser. */
 let streamFrame = false, boardOn = false;
+let boardPos = null, boardPillPos = null, boardWFrac = 0;
 try {
   streamFrame = localStorage.getItem('pl-khung-phat') === '1';
   boardOn = localStorage.getItem('pl-bang') === '1';
+  boardPos = JSON.parse(localStorage.getItem('pl-board-pos') || 'null');
+  boardPillPos = JSON.parse(localStorage.getItem('pl-board-pill-pos') || 'null');
+  boardWFrac = parseFloat(localStorage.getItem('pl-board-w') || '0') || 0;
 } catch (e) {}
 const boardMain = document.getElementById('boardMain');
 const boardPill = document.getElementById('boardPill');
@@ -151,11 +162,27 @@ function applySize() {
     b.style.display = boardOn ? 'block' : 'none';
     b.style.fontSize = fs + 'px';
   }
-  boardMain.style.left = (r.x + pad) + 'px';
-  boardMain.style.top = (r.y + pad) + 'px';
-  boardMain.style.maxWidth = Math.round(r.w * 0.62) + 'px';
-  boardPill.style.top = (r.y + Math.round(r.h * 0.36)) + 'px';
-  boardPill.style.right = (innerWidth - r.x - r.w + pad) + 'px';
+  if (boardWFrac) { boardMain.style.width = Math.round(boardWFrac * r.w) + 'px'; boardMain.style.maxWidth = 'none'; }
+  else { boardMain.style.width = ''; boardMain.style.maxWidth = Math.round(r.w * 0.62) + 'px'; }
+  placeBoard(boardMain, boardPos, r.x + pad, r.y + pad, r, pad);
+  placeBoard(boardPill, boardPillPos, null, r.y + Math.round(r.h * 0.36), r, pad);
+}
+/* Position one board inside the stage: saved fraction if the operator
+   dragged it, else the default spot; then clamp so it never leaves the
+   stage. defX null means "default to the stage's right edge". */
+function placeBoard(el, frac, defX, defY, r, pad) {
+  let x = frac ? r.x + frac.x * r.w : defX;
+  const y = frac ? r.y + frac.y * r.h : defY;
+  if (x === null || x === undefined) x = r.x + r.w - el.offsetWidth - pad;
+  el.style.left = x + 'px'; el.style.top = y + 'px'; el.style.right = 'auto';
+  if (!boardOn) return;
+  const b = el.getBoundingClientRect();
+  let nx = b.left, ny = b.top;
+  if (b.right > r.x + r.w) nx -= (b.right - (r.x + r.w));
+  if (b.bottom > r.y + r.h) ny -= (b.bottom - (r.y + r.h));
+  if (nx < r.x) nx = r.x;
+  if (ny < r.y) ny = r.y;
+  el.style.left = nx + 'px'; el.style.top = ny + 'px';
 }
 addEventListener('resize', applySize);
 applySize();
@@ -171,6 +198,63 @@ function setBangThongBao(on) {
   try { localStorage.setItem('pl-bang', boardOn ? '1' : '0'); } catch (e) {}
   applySize();
   return { ok: true, bangThongBao: boardOn };
+}
+/* v0.1.19 (Anita): drag the board by its body to anywhere in the stage;
+   drag the corner grip to narrow it and the text wraps by itself.
+   Layout is stored as stage fractions so it survives window resizes. */
+function saveBoardLayout() {
+  try {
+    if (boardPos) localStorage.setItem('pl-board-pos', JSON.stringify(boardPos));
+    if (boardPillPos) localStorage.setItem('pl-board-pill-pos', JSON.stringify(boardPillPos));
+    if (boardWFrac) localStorage.setItem('pl-board-w', String(boardWFrac));
+  } catch (e) {}
+}
+function makeDraggable(el, opts) {
+  el.addEventListener('pointerdown', (e) => {
+    if (!boardOn) return;
+    const mode = (opts.resizable && e.target.classList && e.target.classList.contains('pb-grip')) ? 'resize' : 'move';
+    const r = stageRect();
+    const b = el.getBoundingClientRect();
+    const sx = e.clientX, sy = e.clientY;
+    const start = { left: b.left, top: b.top, w: b.width, h: b.height };
+    try { el.setPointerCapture(e.pointerId); } catch (err) {}
+    e.preventDefault();
+    const onMove = (ev) => {
+      const dx = ev.clientX - sx, dy = ev.clientY - sy;
+      if (mode === 'move') {
+        const nx = Math.min(Math.max(start.left + dx, r.x), r.x + r.w - start.w);
+        const ny = Math.min(Math.max(start.top + dy, r.y), r.y + r.h - start.h);
+        el.style.left = nx + 'px'; el.style.top = ny + 'px';
+        const frac = { x: (nx - r.x) / r.w, y: (ny - r.y) / r.h };
+        if (opts.key === 'main') boardPos = frac; else boardPillPos = frac;
+      } else {
+        const nw = Math.min(Math.max(start.w + dx, r.w * 0.26), r.w * 0.92);
+        el.style.width = nw + 'px'; el.style.maxWidth = 'none';
+        boardWFrac = nw / r.w;
+      }
+    };
+    const onUp = () => {
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', onUp);
+      el.removeEventListener('pointercancel', onUp);
+      saveBoardLayout();
+    };
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+    el.addEventListener('pointercancel', onUp);
+  });
+}
+makeDraggable(boardMain, { resizable: true, key: 'main' });
+makeDraggable(boardPill, { resizable: false, key: 'pill' });
+function setDatLaiBang() {
+  boardPos = null; boardPillPos = null; boardWFrac = 0;
+  try {
+    localStorage.removeItem('pl-board-pos');
+    localStorage.removeItem('pl-board-pill-pos');
+    localStorage.removeItem('pl-board-w');
+  } catch (e) {}
+  applySize();
+  return { ok: true };
 }
 
 /* ---------- lights ---------- */
@@ -461,7 +545,7 @@ scene.add(buddha);
    direction, ticket #11 comment 6820370650) ----------
    One large framed mural panel centred on the wall/opening behind the Buddha,
    now 23.0 m wide with its top edge at the red beam over the altar (y 9.3).
-   Artwork: ARTWORK_tranh-nen-ban-tho_v2.webp (scenery only, no Buddha figure;
+   Artwork: ARTWORK_tranh-nen-ban-tho_v3.webp (scenery only, no Buddha figure;
    bodhi tree, lotus pond, misty mountains, pagoda in the mist). The golden
    disc + rings behind the statue are removed in v0.1.5, so the statue stands
    directly in front of the painting and remains the focal point; the panel
@@ -476,7 +560,7 @@ const panelGroup = new THREE.Group(); panelGroup.position.set(0, PANEL.y, PANEL.
 const panelMat = new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness: 0.85, metalness: 0 });
 const panelMesh = new THREE.Mesh(new THREE.PlaneGeometry(PANEL.w, PANEL.h), panelMat);
 panelGroup.add(panelMesh);
-new THREE.TextureLoader().load('ARTWORK_tranh-nen-ban-tho_v2.webp', (tex) => {
+new THREE.TextureLoader().load('ARTWORK_tranh-nen-ban-tho_v3.webp', (tex) => {
   tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
   panelMat.map = tex; panelMat.emissiveMap = tex;
   panelMat.emissive = new THREE.Color(0xffffff); panelMat.emissiveIntensity = 0.3;
@@ -1069,6 +1153,7 @@ window.PhongLive = {
   cameraToanCanh, cameraVungPhat,
   khungPhat: (on) => setKhungPhat(on),
   bangThongBao: (on) => setBangThongBao(on),
+  datLaiBang: () => setDatLaiBang(),
   ready: new Promise((res) => readyCallbacks.push(res)),
 };
 /* Debug/diagnostic handle for whoever verifies the build (not a UI). */

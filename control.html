@@ -59,6 +59,7 @@
       <button id="btnCamZone">cameraVungPhat</button>
       <button id="btnFrame" class="alt">khungPhat — Khung phát 9:16</button>
       <button id="btnBoard" class="alt">bangThongBao — Bảng thông báo</button>
+      <button id="btnBoardReset" class="alt">datLaiBang — Đặt lại vị trí bảng</button>
     </div>
     <p style="font-size:12.5px;color:#cbb27f;margin:10px 0 0">Luồng lạy → xin xăm: chọn tên phật tử → <b>raLay</b> (đi trục giữa, lạy 3 lạy, đứng chờ) → <b>xinXam</b> (chỉ bấm được khi đúng người đó đang chờ; xin xong người tự về ghế) hoặc <b>veCho</b> (về ghế không xin). Bấm sai lúc thì trang phát trả lỗi, lỗi hiện ở log bên dưới.</p>
     <label class="chk"><input type="checkbox" id="bcMode"> Gửi lệnh qua BroadcastChannel (điều khiển tab phát sóng riêng đang mở)</label>
@@ -114,6 +115,7 @@ document.getElementById('btnCamWide').onclick = () => call('cameraToanCanh', [])
 document.getElementById('btnCamZone').onclick = () => call('cameraVungPhat', []);
 document.getElementById('btnFrame').onclick = () => call('khungPhat', []);
 document.getElementById('btnBoard').onclick = () => call('bangThongBao', []);
+document.getElementById('btnBoardReset').onclick = () => call('datLaiBang', []);
 document.getElementById('btnLand').onclick = () => { frame.classList.remove('portrait'); call('cameraToanCanh', []); };
 document.getElementById('btnPort').onclick = () => { frame.classList.add('portrait'); setTimeout(() => call('cameraVungPhat', []), 350); };
 frame.addEventListener('load', () => {
