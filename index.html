@@ -97,6 +97,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/utils/meshopt_decoder.mjs'; /* v0.1.26: meshopt-compressed models */
 
 /* =====================================================================
    PHONG LIVE — a staged meditation hall for livestream.
@@ -339,7 +340,11 @@ function cyl(rt, rb, h, mat, x, y, z, parent, seg) {
    stand-in block of the same height so the show can still run. */
 function loadFitted(url, targetH, onReady) {
   const wrap = new THREE.Group();
-  new GLTFLoader().load(url, (gltf) => {
+  /* v0.1.26: models are meshopt-compressed (EXT_meshopt_compression) — the
+     shared loader has the decoder wired; without it GLTFLoader throws. */
+  const loader = new GLTFLoader();
+  loader.setMeshoptDecoder(MeshoptDecoder);
+  loader.load(url, (gltf) => {
     const m = gltf.scene;
     m.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     const bb = new THREE.Box3().setFromObject(m);

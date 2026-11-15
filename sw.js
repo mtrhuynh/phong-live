@@ -1,6 +1,6 @@
 /* Phong Live service worker: cache the app shell and models on first visit
    so the hall reopens fast and full-screen from the home screen. */
-const CACHE = 'phong-live-cache-28'; /* v0.1.25 broadcast: Dai Phat bed + playlist */
+const CACHE = 'phong-live-cache-29'; /* v0.1.26 slim: meshopt models + decoder */
 const CORE = [
   'index.html', 'control.html', 'dai-phat.html', 'xam-data.js',
   'playlist.json', 'audio/bed.mp3',
@@ -11,6 +11,7 @@ const CORE = [
   'vendor/addons/environments/RoomEnvironment.js',
   'vendor/addons/loaders/GLTFLoader.js',
   'vendor/addons/utils/BufferGeometryUtils.js',
+  'vendor/addons/utils/meshopt_decoder.mjs', /* v0.1.26: meshopt decoder */
   'models/buddha.glb', 'models/monk2.glb', 'models/burner.glb',
   'models/xam-set.glb', 'models/temple.glb',
 ];
