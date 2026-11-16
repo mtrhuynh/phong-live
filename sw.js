@@ -1,6 +1,6 @@
 /* Phong Live service worker: cache the app shell and models on first visit
    so the hall reopens fast and full-screen from the home screen. */
-const CACHE = 'phong-live-cache-32'; /* v0.1.29: healing bed set rotation (#37); beds stream on demand, not precached */
+const CACHE = 'phong-live-cache-33'; /* v0.1.29: healing bed set rotation (#37); beds stream on demand, not precached. cache-33: piece 18 breathing pauses widened (#38) */
 const CORE = [
   'index.html', 'control.html', 'dai-phat.html', 'xam-data.js',
   'playlist.json', 'audio/bed.mp3',
