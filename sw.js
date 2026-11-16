@@ -1,6 +1,6 @@
 /* Phong Live service worker: cache the app shell and models on first visit
    so the hall reopens fast and full-screen from the home screen. */
-const CACHE = 'phong-live-cache-30'; /* v0.1.27 cross-device: Supabase channel + <audio> engine */
+const CACHE = 'phong-live-cache-31'; /* v0.1.28: + screen wake lock on the room page (#36) */
 const CORE = [
   'index.html', 'control.html', 'dai-phat.html', 'xam-data.js',
   'playlist.json', 'audio/bed.mp3',

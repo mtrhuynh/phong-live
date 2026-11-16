@@ -1556,6 +1556,21 @@ function dpUnlockAudio() {
 }
 addEventListener('pointerdown', dpUnlockAudio);
 addEventListener('keydown', dpUnlockAudio);
+/* v0.1.28 (Anita 16/11, #36): keep the screen awake while the room page
+   is open, like a video player — a screen-share live dies if the phone
+   display sleeps. Screen Wake Lock API (Chrome/Android, Safari iOS
+   16.4+). The OS releases the lock when the page is hidden, so
+   re-request it when the page returns to the front; also retry on taps
+   if the first request was refused. Browsers without the API skip it. */
+let plWakeLock = null;
+async function plKeepAwake() {
+  if (!('wakeLock' in navigator) || document.visibilityState !== 'visible') return;
+  try { plWakeLock = await navigator.wakeLock.request('screen'); }
+  catch (e) { plWakeLock = null; }
+}
+plKeepAwake();
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') plKeepAwake(); });
+addEventListener('pointerdown', () => { if (!plWakeLock) plKeepAwake(); });
 /* Local fallback toggle (#dpBar): operator mode only, letterbox only. */
 function dpUpdateBar() {
   const on = dp.started;
