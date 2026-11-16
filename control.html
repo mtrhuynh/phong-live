@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Phong Live — Bảng điều khiển thử lệnh</title>
+<!-- v0.1.27 (#29 cross-device): Supabase JS client for the Realtime
+     command channel (laptop drives the room page on the phone). -->
+<script src="vendor/supabase.min.js"></script>
 <style>
   body { margin:0; font-family:Arial, "Helvetica Neue", sans-serif; background:#1c1108; color:#f0d9a0; }
   header { padding:14px 18px 6px; }
@@ -84,7 +87,9 @@
     </select>
     <div class="grid"><button id="btnDpPlay">▶ Phát đoạn đã chọn</button></div>
     <div id="dpNow" style="margin-top:10px;background:#170f08;border:1px solid #55401c;border-radius:8px;padding:10px;font-size:13px;min-height:36px">Đài phát đang tắt.</div>
+    <div id="sbStatus" style="margin-top:10px;background:#170f08;border:1px solid #55401c;border-radius:8px;padding:10px;font-size:13px">📡 Kênh điều khiển: BroadcastChannel (cùng máy). Supabase: đang kết nối…</div>
     <label class="chk"><input type="checkbox" id="bcMode"> Gửi lệnh qua BroadcastChannel (điều khiển tab phát sóng riêng đang mở)</label>
+    <label class="chk"><input type="checkbox" id="sbMode"> Gửi lệnh qua Supabase (điều khiển điện thoại từ xa — phòng mở ở máy khác, v0.1.27)</label>
     <div id="log">Đang chờ trang phát tải xong…</div>
   </div>
 </main>
@@ -100,6 +105,63 @@ if (bc) bc.onmessage = (ev) => {
   if (d.type === 'daiPhatState' && d.state) { dpShowState(d.state); return; } /* v0.1.25: room pushes now-playing */
   if (d.id && pending.has(d.id)) { pending.get(d.id)(d.result); pending.delete(d.id); }
 };
+/* ---------- v0.1.27: Supabase Realtime cross-device channel ----------
+   Same project as the room page (URL + public anon key). This control
+   page joins channel 'phong-live:room' as a control client: it sends
+   'cmd' events, receives 'cmd-result' (resolves the pending call) and
+   'state' (now-playing push from the room). Presence shows whether a
+   room is online. When sbMode is on, the preview iframe is blanked so
+   the local room does not ALSO apply the command (both rooms are on
+   the same channel). BroadcastChannel stays as the same-device path. */
+const PL_SB_URL = 'https://natylisofhdxklyjvbbb.supabase.co';
+const PL_SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5hdHlsaXNvZmhkeGtseWp2YmJiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkwMDA2NjksImV4cCI6MjA5NDU3NjY2OX0.U0bXBPNvRy3owXYHdbVnwoKl6Tp05WU87NAoUU-UFis';
+const PL_CLIENT_ID = 'ctl-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+let plSb = null, plSbChannel = null, plSbStatus = 'off', plSbRooms = 0;
+const sbStatusEl = document.getElementById('sbStatus');
+function plSbShowStatus() {
+  if (!sbStatusEl) return;
+  const mode = document.getElementById('sbMode').checked ? 'Supabase (xa)' : (document.getElementById('bcMode').checked ? 'BroadcastChannel (cùng máy)' : 'iframe trực tiếp');
+  const sb = { off: 'chưa kết nối', connecting: 'đang kết nối…', connected: 'đã kết nối', error: 'LỖI kết nối' }[plSbStatus] || plSbStatus;
+  sbStatusEl.textContent = '📡 Kênh điều khiển: ' + mode + '. Supabase: ' + sb + (plSbStatus === 'connected' ? ' — phòng đang mở: ' + plSbRooms : '') + '.';
+}
+function plSbConnect() {
+  if (!plSb) return;
+  try { if (plSbChannel) plSbChannel.unsubscribe(); } catch (e) {}
+  plSbStatus = 'connecting'; plSbShowStatus();
+  plSbChannel = plSb.channel('phong-live:room', { config: { presence: { key: PL_CLIENT_ID }, broadcast: { self: true } } });
+  plSbChannel.on('presence', { event: 'sync' }, () => {
+    try {
+      const st = plSbChannel.presenceState();
+      plSbRooms = Object.values(st).flat().filter((p) => p && p.role === 'room').length;
+    } catch (e) { plSbRooms = 0; }
+    plSbShowStatus();
+  });
+  plSbChannel.on('broadcast', { event: 'state' }, ({ payload }) => {
+    if (!payload || payload.from === PL_CLIENT_ID || !payload.state) return;
+    dpShowState(payload.state);
+  });
+  plSbChannel.on('broadcast', { event: 'cmd-result' }, ({ payload }) => {
+    if (!payload || payload.to !== PL_CLIENT_ID || !payload.id) return;
+    if (pending.has(payload.id)) { pending.get(payload.id)(payload.result); pending.delete(payload.id); }
+  });
+  plSbChannel.subscribe((status) => {
+    if (status === 'SUBSCRIBED') {
+      plSbStatus = 'connected'; plSbShowStatus();
+      try { plSbChannel.track({ role: 'control', id: PL_CLIENT_ID }); } catch (e) {}
+      try { plSbChannel.send({ type: 'broadcast', event: 'hello', payload: { from: PL_CLIENT_ID } }); } catch (e) {}
+    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+      plSbStatus = 'error'; plSbShowStatus();
+      setTimeout(plSbConnect, 8000);
+    }
+  });
+}
+try {
+  if (window.supabase) {
+    plSb = window.supabase.createClient(PL_SB_URL, PL_SB_KEY);
+    plSbConnect();
+  }
+} catch (e) { plSbStatus = 'off'; plSbShowStatus(); }
+plSbShowStatus();
 /* ---------- Dai Phat (#29): now-playing display + picker ---------- */
 const dpNowEl = document.getElementById('dpNow');
 const KIND_VN = { welcome: 'Lời chào', life: 'Đời sống', sutra: 'Kinh nhẹ', breath: 'Hướng dẫn thở', remind: 'Nhắc tương tác', close: 'Lời kết' };
@@ -144,9 +206,10 @@ fetch('playlist.json', { cache: 'no-store' }).then((r) => r.json()).then((pl) =>
 });
 /* Quiet poll every 3 s (both modes): a direct BroadcastChannel request
    for daiPhatState, answered by the room page's command listener.
-   bcMode also gets proactive pushes; iframe mode gets both. */
+   bcMode also gets proactive pushes; iframe mode gets both.
+   Skipped in Supabase mode — the room pushes state over Supabase. */
 function dpPollQuiet() {
-  if (!bc) return;
+  if (!bc || document.getElementById('sbMode').checked) return;
   const id = 'dp' + (++seq);
   const to = setTimeout(() => { if (pending.has(id)) pending.delete(id); }, 3000);
   pending.set(id, (res) => { clearTimeout(to); if (res) dpShowState(res); });
@@ -158,8 +221,26 @@ function log(msg) {
   logEl.textContent = '[' + t + '] ' + msg + '\n' + (logEl.textContent === 'Đang chờ trang phát tải xong…' ? '' : logEl.textContent);
 }
 function api() { return frame.contentWindow && frame.contentWindow.PhongLive; }
+/* v0.1.27: send a command over the Supabase channel (cross-device).
+   The room applies it and answers 'cmd-result' with the same id. */
+function sbCall(cmd, args) {
+  if (!plSbChannel || plSbStatus !== 'connected') {
+    log(cmd + ': Supabase chưa kết nối — kiểm tra mạng rồi thử lại (hoặc bỏ chọn Supabase để dùng BroadcastChannel/iframe)');
+    return;
+  }
+  const id = 's' + (++seq);
+  const res = new Promise((resolve) => {
+    pending.set(id, resolve);
+    try {
+      plSbChannel.send({ type: 'broadcast', event: 'cmd', payload: { from: PL_CLIENT_ID, cmd, args, id } });
+    } catch (e) { pending.delete(id); resolve('(không gửi được qua Supabase)'); return; }
+    setTimeout(() => { if (pending.has(id)) { pending.delete(id); resolve('(không có trang phát nào trả lời qua Supabase — kiểm tra phòng có mở không)'); } }, (cmd === 'xinXam' || cmd === 'raLay') ? 60000 : (cmd === 'veCho' ? 45000 : 8000));
+  });
+  res.then((r) => log(cmd + '(' + args.join(', ') + ') → ' + JSON.stringify(r)));
+}
 async function call(cmd, args) {
   args = args || [];
+  if (document.getElementById('sbMode').checked) { sbCall(cmd, args); return; }
   if (document.getElementById('bcMode').checked) {
     if (!bc) { log(cmd + ': trình duyệt không có BroadcastChannel'); return; }
     const id = 'c' + (++seq);
@@ -194,6 +275,23 @@ document.getElementById('btnBoard').onclick = () => call('bangThongBao', []);
 document.getElementById('btnBoardReset').onclick = () => call('datLaiBang', []);
 document.getElementById('btnLand').onclick = () => { frame.classList.remove('portrait'); call('cameraToanCanh', []); };
 document.getElementById('btnPort').onclick = () => { frame.classList.add('portrait'); setTimeout(() => call('cameraVungPhat', []), 350); };
+/* v0.1.27: channel mode switches. Supabase mode blanks the preview
+   iframe so the local room does not ALSO apply the command (both rooms
+   are on the same channel); unchecking restores it. */
+document.getElementById('sbMode').onchange = (e) => {
+  plSbShowStatus();
+  if (e.target.checked) {
+    document.getElementById('bcMode').checked = false;
+    frame.src = 'about:blank';
+    log('Chế độ Supabase: xem trước đã tắt — lệnh đi tới phòng ở máy khác.');
+  } else {
+    frame.src = 'index.html?controls=1';
+  }
+};
+document.getElementById('bcMode').onchange = () => {
+  if (document.getElementById('bcMode').checked) document.getElementById('sbMode').checked = false;
+  plSbShowStatus();
+};
 frame.addEventListener('load', () => {
   const t = setInterval(() => {
     if (api()) { clearInterval(t); log('Trang phát đã sẵn sàng. Ghế và người hiện tại xem bằng nút trangThai.'); }

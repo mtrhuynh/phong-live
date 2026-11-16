@@ -1,107 +1,107 @@
 [
   {
     "file": "audio/00.mp3",
-    "title": "loi-chao-mo-dau",
-    "kind": "welcome"
+    "kind": "welcome",
+    "title": "loi-chao-mo-dau"
   },
   {
     "file": "audio/01.mp3",
-    "title": "met-moi",
-    "kind": "life"
+    "kind": "life",
+    "title": "met-moi"
   },
   {
     "file": "audio/02.mp3",
-    "title": "dung-so-sanh",
-    "kind": "life"
+    "kind": "life",
+    "title": "dung-so-sanh"
   },
   {
     "file": "audio/03.mp3",
-    "title": "lam-het-trach-nhiem",
-    "kind": "life"
+    "kind": "life",
+    "title": "lam-het-trach-nhiem"
   },
   {
     "file": "audio/04.mp3",
-    "title": "biet-du",
-    "kind": "life"
+    "kind": "life",
+    "title": "biet-du"
   },
   {
     "file": "audio/05.mp3",
-    "title": "bat-dau-lai",
-    "kind": "life"
+    "kind": "life",
+    "title": "bat-dau-lai"
   },
   {
     "file": "audio/06.mp3",
-    "title": "cha-me-gia",
-    "kind": "life"
+    "kind": "life",
+    "title": "cha-me-gia"
   },
   {
     "file": "audio/07.mp3",
-    "title": "buong-tay-voi-con",
-    "kind": "life"
+    "kind": "life",
+    "title": "buong-tay-voi-con"
   },
   {
     "file": "audio/08.mp3",
-    "title": "suc-khoe",
-    "kind": "life"
+    "kind": "life",
+    "title": "suc-khoe"
   },
   {
     "file": "audio/09.mp3",
-    "title": "thi-phi",
-    "kind": "life"
+    "kind": "life",
+    "title": "thi-phi"
   },
   {
     "file": "audio/10.mp3",
-    "title": "biet-on-dieu-nho",
-    "kind": "life"
+    "kind": "life",
+    "title": "biet-on-dieu-nho"
   },
   {
     "file": "audio/11.mp3",
-    "title": "co-don",
-    "kind": "life"
+    "kind": "life",
+    "title": "co-don"
   },
   {
     "file": "audio/12.mp3",
-    "title": "ngu-ngon",
-    "kind": "life"
+    "kind": "life",
+    "title": "ngu-ngon"
   },
   {
     "file": "audio/13.mp3",
-    "title": "kinh-tam-dan-dau",
-    "kind": "sutra"
+    "kind": "sutra",
+    "title": "kinh-tam-dan-dau"
   },
   {
     "file": "audio/14.mp3",
-    "title": "kinh-han-thu",
-    "kind": "sutra"
+    "kind": "sutra",
+    "title": "kinh-han-thu"
   },
   {
     "file": "audio/15.mp3",
-    "title": "kinh-thang-minh",
-    "kind": "sutra"
+    "kind": "sutra",
+    "title": "kinh-thang-minh"
   },
   {
     "file": "audio/16.mp3",
-    "title": "kinh-loi-noi-va-viec-lam",
-    "kind": "sutra"
+    "kind": "sutra",
+    "title": "kinh-loi-noi-va-viec-lam"
   },
   {
     "file": "audio/17.mp3",
-    "title": "kinh-nguoi-tri",
-    "kind": "sutra"
+    "kind": "sutra",
+    "title": "kinh-nguoi-tri"
   },
   {
     "file": "audio/18.mp3",
-    "title": "huong-dan-tho",
-    "kind": "breath"
+    "kind": "breath",
+    "title": "huong-dan-tho"
   },
   {
     "file": "audio/19.mp3",
-    "title": "nhac-tuong-tac",
-    "kind": "remind"
+    "kind": "remind",
+    "title": "nhac-tuong-tac"
   },
   {
     "file": "audio/20.mp3",
-    "title": "loi-chuc-ket",
-    "kind": "close"
+    "kind": "close",
+    "title": "loi-chuc-ket"
   }
 ]

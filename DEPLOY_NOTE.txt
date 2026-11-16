@@ -1,8 +1,24 @@
-Phong Live v0.1.25-broadcast - test deployment 2026-11-15
-Broadcast mode (#29): Dai Phat audio embedded in the room page (index.html)
-- voice playlist.json + audio/00..20.mp3 (Mica #28), bed audio/bed.mp3
-  ("Infinite Peace", FreePD CC0, 50 s seamless loop).
-- Remote control from control.html: daiPhatOn / daiPhatOff / daiPhatNext /
-  daiPhatPlay / daiPhatClose / daiPhatGap, plus piece picker + now-playing.
-- dai-phat.html untouched (standalone fallback). sw cache-28.
-Verified PASS by Cuu (issue #29, ai-work-orders). Test link only, pending Anita review.
+Phong Live v0.1.27-cross-device - test deployment 2026-11-16
+Cross-device control + <audio> engine (#29 follow-up, Cuu comments
+6900225350 + 6903661426; Trang authorised 2026-11-16 09:20 +07).
+Built on v0.1.26-slim (#31): broadcast #29 + slim models kept as-is.
+
+A. Supabase Realtime command channel: control.html on Anita's laptop
+drives the room page on her phone (channel 'phong-live:room', same
+project as Phong Thien — URL + public anon key, never service_role).
+Carries every daiPhat* command + all room commands (raLay, xinXam,
+veCho, khungPhat, bangThongBao, cameras, thienNhom, add/removePhatTu,
+trangThai); the room reports state back over the channel. Vendor
+vendor/supabase.min.js (220,148 B) copied from the temple project.
+BroadcastChannel 'phong-live-v0.1' stays as same-device fallback;
+state.supabase = 'off' | 'connecting' | 'connected' | 'error'.
+B. Real <audio> elements + Media Session for voice/bed (Anita's iPhone
+test: a background tab's broadcast audio stops — the room page must be
+the live path, and media elements survive backgrounding as much as the
+OS allows). Same rotation rules, bed ducks to 25% (volume 0.132 ->
+0.033), Media Session metadata (title/artist/album) + play/pause/next
+handlers. WebAudio pad stays ONLY as emergency fallback if bed.mp3
+fails. The v0.1.25 Range-bypass fix in sw.js makes <audio> work now.
+sw cache-30. See REPORT.md + KODA_GHI_CHU.md for the channel design,
+<audio>/Media Session design, and headless self-test results.
+Test link only, pending Cuu verification + Anita review.
