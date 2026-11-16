@@ -171,7 +171,7 @@ function dpShowState(s) {
   const gapMin = Math.round(s.gap / 60 * 10) / 10;
   if (s.playingTitle) dpNowEl.textContent = '🔊 Đang đọc: ' + s.playingTitle.replace(/-/g, ' ') + ' (' + (KIND_VN[s.playingKind] || s.playingKind) + ') — nhạc nền đã nhỏ xuống. Nghỉ giữa các đoạn: ' + gapMin + ' phút.';
   else if (s.audioBlocked) dpNowEl.textContent = '⚠ Đài đã bật nhưng trình duyệt chặn tự phát âm thanh — chạm vào trang phát một lần rồi bật lại.';
-  else dpNowEl.textContent = '🎵 Nhạc nền thiền — đoạn đọc tiếp theo sau ' + gapMin + ' phút. Nhạc nền: ' + (s.bed === 'file' ? 'Infinite Peace (FreePD, CC0)' : s.bed === 'pad' ? 'pad tự sinh (dự phòng)' : 'chưa có') + '.';
+  else dpNowEl.textContent = '🎵 Nhạc nền thiền — đoạn đọc tiếp theo sau ' + gapMin + ' phút. Nhạc nền: ' + (s.bed === 'file' ? 'healing — ' + (s.bedTitle || 'bộ đua đèn') : s.bed === 'pad' ? 'pad tự sinh (dự phòng)' : 'chưa có') + '.';
 }
 /* call() returns nothing (it only logs) — so the Dai Phat buttons use
    this wrapper that reads the state back after every command. */

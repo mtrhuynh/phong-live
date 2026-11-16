@@ -1233,6 +1233,23 @@ const dpBar = document.getElementById('dpBar');
 const dpBarBtn = document.getElementById('dpBarBtn');
 const dpBarState = document.getElementById('dpBarState');
 const DP_BED_FILE = 'audio/bed.mp3';
+/* v0.1.29 (Anita 2026-11-16, #37): the bed is now the healing set from
+   her Dua Den / Phong Thien music shelf, rotating track to track —
+   she rates these above the old single bed. Files: audio/bed-*.mp3
+   (copies of phong-thien-3d/music/*.mp3). Rotation advances on the
+   bed element's 'ended' event; a broken file is skipped; if every
+   file fails the generative pad still catches it, as before. */
+const DP_BED_SET = [
+  { f: 'audio/bed-thien.mp3', t: 'Nhạc thiền' },
+  { f: 'audio/bed-karma.mp3', t: 'Meditation Karma' },
+  { f: 'audio/bed-yoga.mp3', t: 'Yoga' },
+  { f: 'audio/bed-serenity.mp3', t: 'Serenity' },
+  { f: 'audio/bed-relax.mp3', t: 'Relaxation' },
+  { f: 'audio/bed-healing.mp3', t: 'Healing Sleep' },
+  { f: 'audio/bed-moonlight.mp3', t: 'Moonlight' },
+];
+let dpBedIdx = 0, dpBedFails = 0;
+function dpBedCur() { return DP_BED_SET[dpBedIdx % DP_BED_SET.length]; }
 const DP_BED_VOL = 0.55; /* same default as dai-phat.html volMusic 55 */
 const dp = {
   playlist: [], started: false, audioBlocked: false, paused: false,
@@ -1309,7 +1326,7 @@ function dpSetMedia(title, artist) {
     navigator.mediaSession.playbackState = dp.paused ? 'paused' : 'playing';
   } catch (e) {}
 }
-function dpSetMediaBed() { dpSetMedia('Nhạc nền thiền — Infinite Peace', 'Đài Phát — Phòng Live'); }
+function dpSetMediaBed() { dpSetMedia('Nhạc nền — ' + dpBedCur().t, 'Đài Phát — Phòng Live'); }
 function dpSetMediaNone() {
   if (!('mediaSession' in navigator)) return;
   try { navigator.mediaSession.metadata = null; navigator.mediaSession.playbackState = 'none'; } catch (e) {}
@@ -1329,7 +1346,7 @@ function dpPause() {
   dp.paused = true; clearTimeout(dp.gapTimer); dp.gapTimer = null;
   dpVoiceEl.pause(); dpBedEl.pause();
   if (dpPadAC) dpPadAC.suspend().catch(() => {});
-  dpSetMedia(dp.currentItem ? dp.currentItem.title : 'Nhạc nền thiền — Infinite Peace');
+  dpSetMedia(dp.currentItem ? dp.currentItem.title : 'Nhạc nền — ' + dpBedCur().t);
   dpPushState();
 }
 function dpResume() {
@@ -1342,7 +1359,7 @@ function dpResume() {
     const remain = dp.gapEndsAt > Date.now() ? Math.max(1, Math.ceil((dp.gapEndsAt - Date.now()) / 1000)) : 3;
     dpScheduleGap(remain);
   }
-  dpSetMedia(dp.currentItem ? dp.currentItem.title : 'Nhạc nền thiền — Infinite Peace');
+  dpSetMedia(dp.currentItem ? dp.currentItem.title : 'Nhạc nền — ' + dpBedCur().t);
   dpPushState();
 }
 /* --- generative pad: emergency fallback only (bed file failed) --- */
@@ -1417,7 +1434,7 @@ function dpState() {
     on: dp.started, playingTitle: dpPlaying() ? (cur && cur.title) : null,
     playingKind: dpPlaying() ? (cur && cur.kind) : null,
     playingIndex: dpPlaying() ? dp.playlist.indexOf(cur) : -1,
-    gap: dp.gapSeconds, bed: dp.bed, bedFile: DP_BED_FILE,
+    gap: dp.gapSeconds, bed: dp.bed, bedFile: dpBedCur().f, bedTitle: dpBedCur().t,
     bedGain: dp.bed === 'file' ? +dpBedEl.volume.toFixed(3) : (dpPadGain ? +dpPadGain.gain.value.toFixed(3) : null),
     audioBlocked: dp.audioBlocked,
     engine: 'audio', /* v0.1.27: real <audio> elements + Media Session */
@@ -1462,22 +1479,41 @@ function dpNextReading() {
   if (step === 3) { const b = dp.playlist.find(p => p.kind === 'breath'); if (b) { dpPlayItem(b); return; } }
   dpPlayItem(step % 2 === 0 ? dp.lifeQueue.shift() : (dp.sutraQueue.shift() || dp.lifeQueue.shift()));
 }
+async function dpBedPlayCurrent() {
+  dpBedEl.volume = dpBedLevel();
+  dpBedEl.src = dpBedCur().f;
+  await dpBedEl.play();
+  dp.bed = 'file'; dpBedFails = 0;
+}
+/* v0.1.29: when a bed track ends, roll to the next one in the set. */
+function dpBedNext() {
+  if (!dp.started || dp.bed !== 'file' || dp.paused) return;
+  dpBedIdx = (dpBedIdx + 1) % DP_BED_SET.length;
+  dpBedPlayCurrent().then(() => { dpSetMediaBed(); dpPushState(); })
+    .catch(() => { if (++dpBedFails < DP_BED_SET.length) dpBedNext(); });
+}
+dpBedEl.addEventListener('ended', dpBedNext);
 async function dpStartBed() {
   if (dp.bed === 'file') {
     /* bed already running — just (re)play in case it was paused */
     try { await dpBedEl.play(); } catch (e) { if (e && e.name === 'NotAllowedError') throw e; }
     return true;
   }
-  dpBedEl.volume = dpBedLevel();
-  dpBedEl.src = DP_BED_FILE;
-  try { await dpBedEl.play(); }
+  dpBedEl.loop = false; /* v0.1.29: the set rotates on 'ended' instead */
+  try { await dpBedPlayCurrent(); }
   catch (e) {
     if (e && e.name === 'NotAllowedError')
       throw Object.assign(new Error('audio playback blocked'), { name: 'NotAllowedError' });
-    /* file failed to load/play -> generative pad fallback */
-    try { dpStartPad(); return true; } catch (e2) { dp.bed = 'none'; return false; }
+    /* first bed file failed -> try the rest of the set, then pad */
+    let ok = false;
+    for (let i = 0; i < DP_BED_SET.length - 1 && !ok; i++) {
+      dpBedIdx = (dpBedIdx + 1) % DP_BED_SET.length;
+      try { await dpBedPlayCurrent(); ok = true; }
+      catch (e3) { if (e3 && e3.name === 'NotAllowedError') throw e3; }
+    }
+    if (!ok) { try { dpStartPad(); return true; } catch (e2) { dp.bed = 'none'; return false; } }
   }
-  dp.bed = 'file'; return true;
+  return true;
 }
 function dpStopBedSrc() { dpBedEl.pause(); }
 async function dpDaiPhatOn() {
