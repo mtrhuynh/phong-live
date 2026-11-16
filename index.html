@@ -1493,6 +1493,17 @@ function dpBedNext() {
     .catch(() => { if (++dpBedFails < DP_BED_SET.length) dpBedNext(); });
 }
 dpBedEl.addEventListener('ended', dpBedNext);
+/* v0.1.30 (Anita live test 2026-11-16, #40): the OS can pause the bed
+   element behind the engine's back — on her iPhone, starting a TikTok
+   screen broadcast grabs the audio session and the long-running bed
+   never comes back after a reading (the voice 'ended' handler only
+   restores volume). Watchdog: every 4 s, while the broadcast is on and
+   the operator has not paused it, a bed that should be rolling but is
+   paused or ended gets played again. */
+setInterval(() => {
+  if (!dp.started || dp.paused || dp.bed !== 'file') return;
+  if (dpBedEl.paused || dpBedEl.ended) dpBedEl.play().catch(() => {});
+}, 4000);
 async function dpStartBed() {
   if (dp.bed === 'file') {
     /* bed already running — just (re)play in case it was paused */
