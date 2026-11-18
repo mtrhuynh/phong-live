@@ -1,24 +1,29 @@
-Phong Live v0.1.27-cross-device - test deployment 2026-11-16
-Cross-device control + <audio> engine (#29 follow-up, Cuu comments
-6900225350 + 6903661426; Trang authorised 2026-11-16 09:20 +07).
-Built on v0.1.26-slim (#31): broadcast #29 + slim models kept as-is.
+Phong Live v0.1.34 - PROPER merge (rebased on repo HEAD v0.1.30)
+Trang approved 2026-11-18 07:08 +07. Fixes the v0.1.33 FAIL (Cuu:
+v0.1.33 was built from v0.1.31 and lost the four v0.1.30 features).
 
-A. Supabase Realtime command channel: control.html on Anita's laptop
-drives the room page on her phone (channel 'phong-live:room', same
-project as Phong Thien — URL + public anon key, never service_role).
-Carries every daiPhat* command + all room commands (raLay, xinXam,
-veCho, khungPhat, bangThongBao, cameras, thienNhom, add/removePhatTu,
-trangThai); the room reports state back over the channel. Vendor
-vendor/supabase.min.js (220,148 B) copied from the temple project.
-BroadcastChannel 'phong-live-v0.1' stays as same-device fallback;
-state.supabase = 'off' | 'connecting' | 'connected' | 'error'.
-B. Real <audio> elements + Media Session for voice/bed (Anita's iPhone
-test: a background tab's broadcast audio stops — the room page must be
-the live path, and media elements survive backgrounding as much as the
-OS allows). Same rotation rules, bed ducks to 25% (volume 0.132 ->
-0.033), Media Session metadata (title/artist/album) + play/pause/next
-handlers. WebAudio pad stays ONLY as emergency fallback if bed.mp3
-fails. The v0.1.25 Range-bypass fix in sw.js makes <audio> work now.
-sw cache-30. See REPORT.md + KODA_GHI_CHU.md for the channel design,
-<audio>/Media Session design, and headless self-test results.
+Base: repo HEAD v0.1.30 (commit 0202ba6, cache-34) — KEEPS:
+  #36 Wake Lock (screen stays awake during a live)
+  #37 Bed-set rotation (DP_BED_SET, 7 audio/bed-*.mp3, rotates on 'ended')
+  #38 Piece-18 pauses (audio/18.mp3 1,348,380 B, post-#38 version)
+  #40 Bed watchdog (4 s interval auto-resumes a paused bed)
+  #29 Cross-device control (Supabase channel 'phong-live:room')
+Merged in:
+  #39 Program board (from v0.1.28-program): daiPhatProgramOn/Off,
+      program state in daiPhatState, localStorage persistence,
+      playGen race fix, control.html 'Chuong trinh tu chon' panel.
+  #46 Girl actors, FEMALE ONLY per Trang (from v0.1.33): co-gai.glb
+      (compressed v4, meditate clip), monk2.glb REMOVED, SkeletonUtils.js,
+      actor fit 3.0 m (double the original 1.5 m), carpet 0.45 m,
+      walk timescale 0.57 (re-derived), tag heights 3.14/2.26 m.
+Overlap zones resolved (see REPORT.md §4): program state vs wake lock
+(coexist — independent), dpState/dpNextReading vs bed rotation (both
+fields in dpState; rotation is bed-element, program is voice-piece),
+dpUnlockAudio vs bed watchdog (watchdog no-ops when audio is blocked).
+Bed files: the 7 bed-*.mp3 (18.3 MB) stream on demand per v0.1.30
+design, NOT precached in sw.js CORE (precaching would triple the
+first-load cache; the SW caches them on first fetch). See REPORT.md §4.
+
+sw cache-37. See REPORT.md + KODA_GHI_CHU.md for the merge, overlap
+resolutions, and headless self-test results.
 Test link only, pending Cuu verification + Anita review.

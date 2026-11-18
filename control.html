@@ -86,6 +86,23 @@
       <option value="">— Đang tải playlist… —</option>
     </select>
     <div class="grid"><button id="btnDpPlay">▶ Phát đoạn đã chọn</button></div>
+
+    <hr style="border:0;border-top:1px solid #55401c;margin:14px 0 4px">
+    <h3 style="font-size:14px;color:#f5c95e;margin:6px 0 2px">🎙 Chương trình tự chọn (#39)</h3>
+    <p style="font-size:12.5px;color:#cbb27f;margin:0 0 8px">Chọn sẵn các đoạn đọc theo thứ tự, lặp lại mấy vòng — buổi live chạy tự động không cần ngồi bấm. Mặc định: đủ 21 đoạn (vòng đọc hiện tại).</p>
+    <div id="dpProgList" style="max-height:220px;overflow:auto;background:#170f08;border:1px solid #55401c;border-radius:8px;padding:8px 10px;font-size:13px">— Đang tải playlist… —</div>
+    <label for="dpProgRepeat">Lặp lại toàn bộ chương trình</label>
+    <select id="dpProgRepeat" style="width:100%;box-sizing:border-box;padding:9px 10px;border-radius:8px;border:1px solid #7a5a22;background:#170f08;color:#ffe9b8;font-size:14px">
+      <option value="1" selected>1 lần</option>
+      <option value="2">2 lần</option>
+      <option value="3">3 lần</option>
+      <option value="0">Lặp mãi</option>
+    </select>
+    <div class="grid">
+      <button id="btnProgApply">✔ Áp dụng chương trình</button>
+      <button id="btnProgOff" class="alt">✕ Tắt chương trình</button>
+    </div>
+    <div id="dpProgNow" style="margin-top:10px;background:#170f08;border:1px solid #55401c;border-radius:8px;padding:10px;font-size:13px;min-height:36px">Chương trình: tắt.</div>
     <div id="dpNow" style="margin-top:10px;background:#170f08;border:1px solid #55401c;border-radius:8px;padding:10px;font-size:13px;min-height:36px">Đài phát đang tắt.</div>
     <div id="sbStatus" style="margin-top:10px;background:#170f08;border:1px solid #55401c;border-radius:8px;padding:10px;font-size:13px">📡 Kênh điều khiển: BroadcastChannel (cùng máy). Supabase: đang kết nối…</div>
     <label class="chk"><input type="checkbox" id="bcMode"> Gửi lệnh qua BroadcastChannel (điều khiển tab phát sóng riêng đang mở)</label>
@@ -164,9 +181,46 @@ try {
 plSbShowStatus();
 /* ---------- Dai Phat (#29): now-playing display + picker ---------- */
 const dpNowEl = document.getElementById('dpNow');
+const dpProgNowEl = document.getElementById('dpProgNow');
 const KIND_VN = { welcome: 'Lời chào', life: 'Đời sống', sutra: 'Kinh nhẹ', breath: 'Hướng dẫn thở', remind: 'Nhắc tương tác', close: 'Lời kết' };
+let dpProgSynced = false; /* v0.1.28: sync checkboxes once from the room's stored program */
+function dpProgRepeatLabel(r) { return r === 0 ? 'lặp mãi' : (r + ' lần'); }
+function dpShowProgram(s) { /* v0.1.28 (#39): progress line for the custom program */
+  if (!dpProgNowEl) return;
+  const p = s && s.program;
+  if (!p) { dpProgNowEl.textContent = 'Chương trình: —'; return; }
+  if (!p.on) { dpProgNowEl.textContent = 'Chương trình: tắt (đang chạy vòng đọc tự động).'; return; }
+  const n = p.pieces.length;
+  const rep = dpProgRepeatLabel(p.repeats);
+  if (p.finished) { dpProgNowEl.textContent = 'Chương trình: đã xong ' + n + ' đoạn × ' + rep + ' — chỉ còn nhạc nền, đang chờ.'; return; }
+  if (!s.on) { dpProgNowEl.textContent = 'Chương trình: đã chọn ' + n + ' đoạn, lặp ' + rep + ' — chưa bắt đầu (bật đài phát để chạy).'; return; }
+  const cyc = p.cycle || 1;
+  if (s.playingTitle) {
+    const k = p.pieces.indexOf(s.playingIndex);
+    if (k >= 0) {
+      dpProgNowEl.textContent = 'Chương trình: đang đọc đoạn ' + (k + 1) + '/' + n + ' — ' + s.playingTitle.replace(/-/g, ' ') + ' (vòng ' + cyc + '/' + rep + ').';
+    } else {
+      dpProgNowEl.textContent = 'Chương trình: đang đọc đoạn ngoài chương trình — ' + s.playingTitle.replace(/-/g, ' ') + ' (chương trình tiếp tục sau đó).';
+    }
+  } else {
+    let nextPos = p.position + 1, nextCyc = cyc;
+    if (nextPos >= n) { nextPos = 0; nextCyc = cyc + 1; }
+    dpProgNowEl.textContent = 'Chương trình: nghỉ nhạc — đoạn tiếp theo ' + (nextPos + 1) + '/' + n + ' (vòng ' + nextCyc + '/' + rep + ').';
+  }
+  /* first state that carries a program: reflect the room's stored program
+     in the checkboxes + repeat selector (so Anita sees what is set). */
+  if (!dpProgSynced && n > 0) {
+    dpProgSynced = true;
+    document.querySelectorAll('#dpProgList input[type=checkbox]').forEach((cb) => {
+      cb.checked = p.pieces.includes(parseInt(cb.value, 10));
+    });
+    const rs = document.getElementById('dpProgRepeat');
+    if (rs) rs.value = String(p.repeats);
+  }
+}
 function dpShowState(s) {
   if (!s) return;
+  dpShowProgram(s);
   if (!s.on) { dpNowEl.textContent = 'Đài phát đang tắt.'; return; }
   const gapMin = Math.round(s.gap / 60 * 10) / 10;
   if (s.playingTitle) dpNowEl.textContent = '🔊 Đang đọc: ' + s.playingTitle.replace(/-/g, ' ') + ' (' + (KIND_VN[s.playingKind] || s.playingKind) + ') — nhạc nền đã nhỏ xuống. Nghỉ giữa các đoạn: ' + gapMin + ' phút.';
@@ -201,9 +255,36 @@ fetch('playlist.json', { cache: 'no-store' }).then((r) => r.json()).then((pl) =>
     o.textContent = String(i).padStart(2, '0') + ' — ' + p.title.replace(/-/g, ' ') + ' (' + (KIND_VN[p.kind] || p.kind) + ')';
     sel.appendChild(o);
   });
+  /* v0.1.28 (#39): program checklist — same playlist order, all 21
+     checked by default (= the full auto-rotation set). */
+  const list = document.getElementById('dpProgList');
+  list.innerHTML = '';
+  pl.forEach((p, i) => {
+    const lab = document.createElement('label');
+    lab.style.cssText = 'display:flex;gap:8px;align-items:center;margin:0;padding:4px 0;color:#f0d9a0;font-size:13px;cursor:pointer';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.value = String(i); cb.checked = true;
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode(String(i).padStart(2, '0') + ' — ' + p.title.replace(/-/g, ' ') + ' (' + (KIND_VN[p.kind] || p.kind) + ')'));
+    list.appendChild(lab);
+  });
 }).catch(() => {
   document.getElementById('dpPicker').innerHTML = '<option value="">— Chưa tải được playlist —</option>';
+  document.getElementById('dpProgList').textContent = '— Chưa tải được playlist —';
 });
+/* v0.1.28 (#39): apply / turn off the program. Goes through dpCmd so
+   it works in iframe, BroadcastChannel and Supabase mode alike. */
+function dpProgChecked() {
+  return Array.from(document.querySelectorAll('#dpProgList input[type=checkbox]:checked'))
+    .map((cb) => parseInt(cb.value, 10)).sort((a, b) => a - b);
+}
+document.getElementById('btnProgApply').onclick = () => {
+  const pieces = dpProgChecked();
+  if (!pieces.length) { log('daiPhatProgramOn: chưa chọn đoạn đọc nào — tích ít nhất 1 đoạn'); return; }
+  const repeats = parseInt(document.getElementById('dpProgRepeat').value, 10);
+  dpCmd('daiPhatProgramOn', [pieces, repeats]);
+};
+document.getElementById('btnProgOff').onclick = () => dpCmd('daiPhatProgramOff', []);
 /* Quiet poll every 3 s (both modes): a direct BroadcastChannel request
    for daiPhatState, answered by the room page's command listener.
    bcMode also gets proactive pushes; iframe mode gets both.

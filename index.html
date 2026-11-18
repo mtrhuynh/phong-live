@@ -104,6 +104,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/utils/meshopt_decoder.mjs'; /* v0.1.26: meshopt-compressed models */
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js'; /* v0.1.31: clone skinned girl actors (three r160; named exports retarget/retargetClip/clone) */
 
 /* =====================================================================
    PHONG LIVE — a staged meditation hall for livestream.
@@ -344,7 +345,19 @@ function cyl(rt, rb, h, mat, x, y, z, parent, seg) {
    bounding box, centre X/Z on the wrap origin, rest the base on y=0, scale so
    the model is exactly targetH metres tall. If loading fails, drop a plain
    stand-in block of the same height so the show can still run. */
-function loadFitted(url, targetH, onReady) {
+/* v0.1.31: trueH — the model's true height in its own units, when Box3
+   cannot be trusted. Box3.setFromObject is bogus for skinned meshes:
+   for the girl it returns a 0.22 m box (the SkinnedMesh boundingBox at
+   load time), and her quantized geometry decodes to normalized [-1,1],
+   so the raw bounds are meaningless too. Her skeleton and animations
+   ARE in meters (Hips bind Y 0.499, meditate Hips Y 0.120, walk drift
+   1.372 m — all verified), and her height is 0.979 m (uncompressed
+   v4 POSITION accessor max y; the compressed file's skeleton is
+   byte-identical). The quantize compensation lives in the skin's
+   inverse bind matrices, so the mesh renders at the right size once
+   the scale is right. When trueH is given, skip the Box3 centering
+   too — the girl is already centred on x/z and stands on y=0. */
+function loadFitted(url, targetH, onReady, trueH) {
   const wrap = new THREE.Group();
   /* v0.1.26: models are meshopt-compressed (EXT_meshopt_compression) — the
      shared loader has the decoder wired; without it GLTFLoader throws. */
@@ -356,15 +369,18 @@ function loadFitted(url, targetH, onReady) {
     const bb = new THREE.Box3().setFromObject(m);
     const size = bb.getSize(new THREE.Vector3());
     const ctr = bb.getCenter(new THREE.Vector3());
-    m.position.set(-ctr.x, -bb.min.y, -ctr.z);
+    const h = trueH || size.y;
+    if (!trueH) m.position.set(-ctr.x, -bb.min.y, -ctr.z);
     const inner = new THREE.Group(); inner.add(m);
-    inner.scale.setScalar(targetH / size.y);
+    inner.scale.setScalar(targetH / h);
     wrap.add(inner);
-    if (onReady) onReady(wrap, m);
+    /* v0.1.31: pass the animation clips too — the girl actor system
+       needs them (meditate / idle / walk / bow / sit). */
+    if (onReady) onReady(wrap, m, gltf.animations || []);
   }, undefined, () => {
     const ph = box(targetH * 0.6, targetH, targetH * 0.6, MAT.goldSoft, 0, targetH / 2, 0, wrap);
     ph.castShadow = true;
-    if (onReady) onReady(wrap, null);
+    if (onReady) onReady(wrap, null, []);
   });
   return wrap;
 }
@@ -442,7 +458,11 @@ const carpetTex = canvasTexture(512, 1024, (g, W, H) => {
   g.beginPath(); g.moveTo(W - 48, 0); g.lineTo(W - 48, H); g.stroke();
   /* No centre motifs (v0.1.10): the lotus flowers were removed per Trang — they looked squished/distorted in the 9:16 view. */
 });
-const carpet = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 26),
+/* v0.1.34 (merge; Trang 2026-11-18 00:38: the 2.4 m carpet was STILL
+   far too wide — "nằm ngủ còn dư chỗ"): width 0.45 m (in her 400-500 mm
+   range) — a thin red ribbon down the centre, not a field. Same
+   length, red, gold borders on the long sides. */
+const carpet = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 26),
   new THREE.MeshStandardMaterial({ map: carpetTex, roughness: 0.92 }));
 carpet.rotation.x = -Math.PI / 2; carpet.position.set(0, 0.012, 2.2);
 carpet.receiveShadow = true; scene.add(carpet);
@@ -869,16 +889,73 @@ boardFace.position.set(0, 1.25, 0.06); board.add(boardFace);
 const STREAM_ZONE = { xMin: -5.7, xMax: 5.7, zMin: -14.8, zMax: -1.1 };
 
 /* ---------- devotees (phat tu) ---------- */
-let monkProto = null;
-const monkWaiters = [];
-loadFitted('models/monk2.glb', 1.5, (wrap) => { monkProto = wrap; monkWaiters.splice(0).forEach((fn) => fn()); });
+/* v0.1.31 (#46, Anita 2026-11-17; Trang 2026-11-17 16:45-16:46):
+   guest actors are the rigged GIRL, FEMALE-ONLY per Trang (the boy
+   model is NOT used — this deviates from #46's "mix girl and boy").
+   Model: co-gai-v4-meditate, meshopt-compressed by the Phong Thien
+   cast compression set (709,928 B; clips idle / sit / walk / bow /
+   meditate — the meditate clip is a real static cross-legged pose).
+   Seated = meditate clip. Waiting = idle. Moving = walk clip with
+   Hips root motion zeroed (feet match the ground, no gliding).
+   Lay = bow clip, not the old whole-body squash/tilt. Walking is
+   minimal by design: seat -> red carpet -> bow point only. */
+let girlProto = null;      /* wrap group, scaled to 3.0 m tall */
+let girlClips = {};        /* name -> master AnimationClip */
+let girlWalk = null;       /* walk clip, Hips root motion zeroed */
+const girlWaiters = [];
+/* Walk: the clip's natural pace is 0.588 m/s (Hips Z drift 1.372 m
+   over 2.33 s). We walk at 1.0 m/s with the clip sped up to match,
+   so the steps land on the ground instead of sliding.
+   v0.1.34 (merge; re-derived for the 3.0 m fit): at the 3.0 m fit the
+   inner scale is 3.0644, so the clip paces 0.588 x 3.0644 = 1.80 m/s at
+   timescale 1.0 — measured directly (diag-walk33.js): step 1.024 m
+   every 0.579 s -> pace 1.769 m/s. Timescale 0.57 slows the clip to
+   1.769 x 0.57 = 1.01 m/s, matching the 1.0 m/s group speed. Do NOT
+   keep 1.0 (feet would slide ~77%) and do NOT restore 1.7. */
+const GIRL_WALK_SPEED = 1.0;          /* m/s on the floor */
+const GIRL_WALK_TIMESCALE = 0.57;     /* re-derived for the 3.0 m fit (see above) */
+const GIRL_BOW_TIMESCALE = 1.5;       /* bow clip 6.0 s -> 4.0 s per bow */
+function zeroRootMotion(clip) {
+  if (!clip) return null;
+  const c = clip.clone();
+  for (const track of c.tracks) {
+    /* NOTE: GLTFLoader sanitizes node names at load (PropertyBinding:
+       ':' is stripped, so the runtime track is 'mixamorigHips.position',
+       not 'mixamorig:Hips.position' as written in the file). Match both. */
+    if (track.name === 'mixamorigHips.position' || track.name === 'mixamorig:Hips.position') {
+      const x0 = track.values[0], z0 = track.values[2];
+      for (let i = 0; i < track.values.length; i += 3) { track.values[i] = x0; track.values[i + 2] = z0; }
+    }
+  }
+  return c;
+}
+/* v0.1.31: the girl is 0.979 m tall in her own (meter) units — fit by
+   that, NOT by Box3 (see loadFitted's trueH note).
+   v0.1.34 (merge; Trang 2026-11-18 00:38: people must be DOUBLED):
+   fit height 3.0 m — double the ORIGINAL 1.5 m fit (inner scale
+   3.0644). Standing head ~2.42 m, seated meditate head ~1.42 m —
+   still clearly smaller than the 3.0 m burner and the 5.22 m Buddha.
+   Same model, clips, pose map, seats, routes, bow point, xam anchor —
+   only the scale changes. */
+loadFitted('models/co-gai.glb', 3.0, (wrap, m, anims) => {
+  girlProto = wrap;
+  for (const a of (anims || [])) girlClips[a.name] = a;
+  girlWalk = zeroRootMotion(girlClips.walk);
+  girlWaiters.splice(0).forEach((fn) => fn());
+}, 0.979);
 
-const ROBE_TINTS = [0xdcebfb, 0xf5d7c4, 0xc9d9f2, 0xf7e3b0, 0xe6d5f0, 0xd5ecd9, 0xffd9d0];
+/* v0.1.34: name-tag heights scale with the fit (1.78/1.28 m at the
+   1.7 m fit x 3.0/1.7) so the tag still floats above the head. At the
+   old heights the tag would sit INSIDE the body (standing head ~2.42 m,
+   seated meditate head ~1.42 m, sit-at-table head ~1.90 m) and be
+   occluded from the front camera. Sprite size unchanged (1.9 m wide). */
+const TAG_Y_STAND = 3.14;
+const TAG_Y_SEAT = 2.26;
+
 const actors = new Map(); /* name -> actor */
 let lastQue = null;       /* { soQue, tenQue, nguoi } */
 let nguoiDangLay = null;  /* name of the ONE devotee currently out bowing/waiting, or null */
 let deepMeditation = false;
-let breathFactor = 1, breathTarget = 1;
 
 function nameSprite(name) {
   const tex = canvasTexture(512, 128, (g, W, H) => {
@@ -898,28 +975,56 @@ function makeActor(name, seat, isFake) {
   const body = new THREE.Group(); group.add(body);
   const actor = {
     name, seat, group, body, busy: false, seated: false, dead: false, isFake: !!isFake,
-    phase: Math.random() * Math.PI * 2, tint: ROBE_TINTS[seats.indexOf(seat) % ROBE_TINTS.length],
+    phase: Math.random() * Math.PI * 2,
     tag: nameSprite(name),
+    mixer: null, actions: {}, curClip: null,
   };
-  actor.tag.position.y = 1.78; group.add(actor.tag);
+  actor.tag.position.y = TAG_Y_STAND; group.add(actor.tag);
   const fill = () => {
-    if (actor.dead || !monkProto) return;
-    const inst = monkProto.clone(true);
+    if (actor.dead || !girlProto) return;
+    /* v0.1.31: skinned mesh — a plain clone() would share the skeleton
+       and every actor would move as one. SkeletonUtils.clone rebinds a
+       fresh skeleton per actor. */
+    const inst = SkeletonUtils.clone(girlProto);
     inst.traverse((o) => {
       if (o.isMesh) {
         o.castShadow = true;
-        if (o.material) {
-          o.material = o.material.clone();
-          if (o.geometry && o.geometry.getAttribute('color')) o.material.vertexColors = true;
-          o.material.roughness = 0.85;
-          if (o.material.color) o.material.color.multiply(new THREE.Color(actor.tint));
-        }
+        if (o.material) { o.material = o.material.clone(); o.material.roughness = 0.85; }
       }
     });
     body.add(inst);
+    /* v0.1.31: one mixer per actor (clips are shared read-only data;
+       the walk clip here is the root-motion-zeroed copy). No robe tint:
+       the girl is one textured material — tinting would dye her skin
+       and dress a different colour per actor. Name tags tell them apart. */
+    actor.mixer = new THREE.AnimationMixer(inst);
+    actor.actions = {
+      meditate: actor.mixer.clipAction(girlClips.meditate, inst),
+      idle: actor.mixer.clipAction(girlClips.idle, inst),
+      walk: actor.mixer.clipAction(girlWalk, inst),
+      bow: actor.mixer.clipAction(girlClips.bow, inst),
+      sit: actor.mixer.clipAction(girlClips.sit, inst),
+    };
+    actor.actions.walk.timeScale = GIRL_WALK_TIMESCALE;
+    actor.actions.bow.timeScale = GIRL_BOW_TIMESCALE;
+    actor.actions.bow.setLoop(THREE.LoopOnce, 1);
+    actor.actions.bow.clampWhenFinished = true;
+    actor.actions.sit.setLoop(THREE.LoopOnce, 1);
+    actor.actions.sit.clampWhenFinished = true;
+    setClip(actor, actor.seated ? 'meditate' : 'idle');
   };
-  if (monkProto) fill(); else monkWaiters.push(fill);
+  if (girlProto) fill(); else girlWaiters.push(fill);
   return actor;
+}
+/* Crossfade an actor to a clip (instant on first use). */
+function setClip(actor, name) {
+  if (!actor.mixer || !actor.actions[name]) return;
+  if (actor.curClip === name) return;
+  const prev = actor.curClip ? actor.actions[actor.curClip] : null;
+  const next = actor.actions[name];
+  if (prev) prev.fadeOut(0.4);
+  next.reset().fadeIn(0.4).play();
+  actor.curClip = name;
 }
 function faceToward(actor, dx, dz, dur) {
   const from = actor.group.rotation.y;
@@ -928,39 +1033,73 @@ function faceToward(actor, dx, dz, dur) {
   while (from - to > Math.PI) to += Math.PI * 2;
   return tween(dur || 0.35, (e) => { actor.group.rotation.y = lerp(from, to, e); });
 }
-/* Walk a list of floor waypoints at a steady pace, with a gentle bob. */
-async function walkPath(actor, points, speed) {
+/* Walk a list of floor waypoints. v0.1.31: the girl plays her real
+   walk clip (legs alternate; Hips root motion zeroed so the feet
+   match the ground). The old bob is gone. Pace is the clip's natural
+   pace sped up to GIRL_WALK_SPEED — steps land on the ground. */
+async function walkPath(actor, points) {
+  setClip(actor, 'walk');
   for (const p of points) {
     const from = actor.group.position.clone();
     const to = new THREE.Vector3(p[0], 0, p[1]);
     const dist = from.distanceTo(to);
     if (dist < 0.02) continue;
     await faceToward(actor, to.x - from.x, to.z - from.z, 0.3);
-    await tween(dist / (speed || 2.1), (e, raw) => {
+    await tween(dist / GIRL_WALK_SPEED, (e) => {
       actor.group.position.lerpVectors(from, to, e);
-      actor.body.position.y = Math.abs(Math.sin(raw * Math.PI * Math.max(2, dist * 2.2))) * 0.045;
-      actor.body.rotation.z = Math.sin(raw * Math.PI * Math.max(2, dist * 2.2)) * 0.03;
     });
-    actor.body.position.y = 0; actor.body.rotation.z = 0;
   }
+  setClip(actor, 'idle');
 }
 function standUp(actor) {
-  const sy = actor.body.scale.y, ty = actor.tag.position.y;
-  return tween(1.15, (e) => {
-    actor.body.scale.y = lerp(sy, 1, e);
-    actor.tag.position.y = lerp(ty, 1.78, e);
+  const ty = actor.tag.position.y;
+  setClip(actor, 'idle');
+  return tween(0.9, (e) => {
+    actor.tag.position.y = lerp(ty, TAG_Y_STAND, e);
   }).then(() => { actor.seated = false; });
 }
 function sitDown(actor) {
-  const sy = actor.body.scale.y, ty = actor.tag.position.y;
-  return tween(1.15, (e) => {
-    actor.body.scale.y = lerp(sy, 0.68, e);
-    actor.tag.position.y = lerp(ty, 1.28, e);
+  const ty = actor.tag.position.y;
+  setClip(actor, 'meditate');
+  return tween(0.9, (e) => {
+    actor.tag.position.y = lerp(ty, TAG_Y_SEAT, e);
   }).then(() => { actor.seated = true; });
 }
-function kneel(actor, down) {
-  const sy = actor.body.scale.y;
-  return tween(1.1, (e) => { actor.body.scale.y = lerp(sy, down ? 0.5 : 1, e); });
+/* v0.1.31: one real bow — the bow clip (down and up), replacing the
+   old whole-body squash + rotation.x tilt. */
+async function playBow(actor) {
+  if (!actor.mixer || !actor.actions.bow) return;
+  const prev = actor.curClip && actor.curClip !== 'bow' ? actor.actions[actor.curClip] : null;
+  const bow = actor.actions.bow;
+  if (prev) prev.fadeOut(0.35);
+  bow.reset(); bow.setLoop(THREE.LoopOnce, 1); bow.clampWhenFinished = true;
+  bow.play(); bow.fadeIn(0.35);
+  actor.curClip = 'bow';
+  await tween(6.0 / GIRL_BOW_TIMESCALE, () => {});
+  /* rise back to standing idle — never leave the actor with no active
+     clip (the mixer would drop the bones to the bind pose). */
+  setClip(actor, 'idle');
+}
+/* v0.1.31: sit down still at the fortune table (xin xam) — the sit clip
+   is a static seated pose (Hips Y 0.326, constant over the whole 7.17 s),
+   so the actor sits quietly while the tube is shaken. This is NOT the
+   meditate clip the seated devotees use in the room (cross-legged,
+   Hips Y 0.120); sit is an upright seat at the table (Hips Y 0.326).
+   Trang 2026-11-17 16:55 +07: xin xam = ngoi yen. */
+async function sitStill(actor) {
+  setClip(actor, 'sit');
+  const ty = actor.tag.position.y;
+  return tween(0.9, (e) => {
+    actor.tag.position.y = lerp(ty, TAG_Y_SEAT, e);
+  });
+}
+/* v0.1.31: rise from the sit pose back to standing (after xin xam). */
+async function standFromSit(actor) {
+  setClip(actor, 'idle');
+  const ty = actor.tag.position.y;
+  return tween(0.9, (e) => {
+    actor.tag.position.y = lerp(ty, TAG_Y_STAND, e);
+  });
 }
 function seatEntryPoints(seat) { return [seat.x, seat.z + 1.15]; }
 /* v0.1.2: with 3 columns the old outer side aisle (x = ±9.2) is gone —
@@ -974,7 +1113,7 @@ function aisleX(seat) { return seat.x >= 0 ? 6.0 : -6.0; }
 async function walkInActor(actor, seat) {
   actor.group.position.set(0, 0, 15.9);
   actor.group.rotation.y = Math.PI;
-  await walkPath(actor, [[aisleX(seat), 13.8], [aisleX(seat), seat.z + 1.15], seatEntryPoints(seat), [seat.x, seat.z]], 2.2);
+  await walkPath(actor, [[aisleX(seat), 13.8], [aisleX(seat), seat.z + 1.15], seatEntryPoints(seat), [seat.x, seat.z]]);
   await faceToward(actor, 0, -1, 0.4);
   actor.group.position.y = 0.16;
   await sitDown(actor);
@@ -984,7 +1123,7 @@ async function walkOutActor(actor) {
   const seat = actor.seat;
   actor.group.position.y = 0;
   await standUp(actor);
-  await walkPath(actor, [seatEntryPoints(seat), [aisleX(seat), seat.z + 1.15], [aisleX(seat), 13.8], [0, 15.9]], 2.2);
+  await walkPath(actor, [seatEntryPoints(seat), [aisleX(seat), seat.z + 1.15], [aisleX(seat), 13.8], [0, 15.9]]);
   actor.dead = true;
   scene.remove(actor.group);
   seat.actor = null; actors.delete(actor.name);
@@ -1070,14 +1209,13 @@ async function doRemovePhatTu(name) {
    fortune anchor) to their own seat, along the central axis, and sit. */
 async function returnToSeat(actor) {
   const seat = actor.seat;
-  await walkPath(actor, [[0, seat.z + 1.15], seatEntryPoints(seat), [seat.x, seat.z]], 2.0);
+  await walkPath(actor, [[0, seat.z + 1.15], seatEntryPoints(seat), [seat.x, seat.z]]);
   await faceToward(actor, 0, -1, 0.4);
   actor.group.position.y = 0.16;
   await sitDown(actor);
 }
 /* raLay: stand, walk the central axis to the bow point, bow 3 times
-   (kneel held steady; only the upper body bows — no height squash
-   between beats), stand again and WAIT at the bow point. */
+   with the real bow clip, stand again and WAIT at the bow point. */
 async function doRaLay(name) {
   const actor = actors.get(String(name || '').trim());
   if (!actor) return { ok: false, loi: 'khong tim thay' };
@@ -1088,16 +1226,11 @@ async function doRaLay(name) {
   const seat = actor.seat;
   actor.group.position.y = 0;
   await standUp(actor);
-  await walkPath(actor, [seatEntryPoints(seat), [0, seat.z + 1.15], [0, BOW_POINT.z + 1.05], [BOW_POINT.x, BOW_POINT.z]], 2.0);
+  await walkPath(actor, [seatEntryPoints(seat), [0, seat.z + 1.15], [0, BOW_POINT.z + 1.05], [BOW_POINT.x, BOW_POINT.z]]);
   await faceToward(actor, 0, -1, 0.4);
-  await kneel(actor, true); /* into the kneel and HOLD it through all 3 bows */
-  for (let i = 0; i < 3; i++) {
-    await tween(0.75, (e) => { actor.body.rotation.x = 0.55 * e; });
-    await tween(0.95, (e) => { actor.body.rotation.x = 0.55 * (1 - e); });
-    if (i < 2) await tween(0.35, () => {});
-  }
-  actor.body.rotation.x = 0;
-  await kneel(actor, false); /* rise back to standing, still at the bow point */
+  /* v0.1.31: three real bows — the bow clip (down and up) three times.
+     No kneel squash, no body tilt. */
+  for (let i = 0; i < 3; i++) await playBow(actor);
   actor.out = 'dang cho';
   actor.busy = false;
   return { ok: true };
@@ -1123,10 +1256,12 @@ async function doXinXam(name) {
   actor.busy = true; actor.out = 'dang xin xam';
   const que = window.XAM_DATA[Math.floor(Math.random() * window.XAM_DATA.length)];
   /* bow point -> fortune anchor stand point (inside the stream zone) */
-  await walkPath(actor, [[0, XAM_ANCHOR.standPoint.z], [XAM_ANCHOR.standPoint.x, XAM_ANCHOR.standPoint.z]], 2.0);
+  await walkPath(actor, [[0, XAM_ANCHOR.standPoint.z], [XAM_ANCHOR.standPoint.x, XAM_ANCHOR.standPoint.z]]);
   await faceToward(actor, 0, -1, 0.4);
-  /* kneel, shake the tube ~4 s */
-  await kneel(actor, true);
+  /* v0.1.31: sit down still at the fortune table while the tube is
+     shaken (Trang 16:55 +07 — xin xam = ngoi yen, sit clip, NOT
+     meditate and NOT standing/idle). */
+  await sitStill(actor);
   await tween(4, (e, raw) => {
     xamAnchor.rotation.z = Math.sin(raw * Math.PI * 10) * 0.10 * Math.sin(Math.min(raw * 3, 1) * Math.PI * 0.5);
     xamAnchor.rotation.x = Math.cos(raw * Math.PI * 8) * 0.05;
@@ -1142,8 +1277,8 @@ async function doXinXam(name) {
   lastQue = { soQue: que[0], tenQue: que[1], nguoi: actor.name };
   await tween(3.2, () => {}); /* a quiet beat while the board is read */
   drawStick.visible = false; drawStick.rotation.z = 0;
-  /* stand, return along the central axis, sit down — turn over */
-  await kneel(actor, false);
+  /* stand up from the seat, return along the central axis, sit down — turn over */
+  await standFromSit(actor);
   await returnToSeat(actor);
   nguoiDangLay = null; actor.out = null; actor.busy = false;
   return { soQue: que[0], tenQue: que[1] };
@@ -1217,6 +1352,20 @@ function cameraVungPhat() { flyCamera([0, 4.6, 14.5], [0, 2.0, -6.6], 76); }
    no controls attribute and render nothing; the only visible control
    is #dpBar, which shows solely in operator mode (?controls=1) in
    the letterbox outside the stage (positioned by applySize below).
+   v0.1.28 (#39, Anita 2026-11-16): programmable playlist board.
+   control.html gains a 'Chương trình tự chọn' panel; new commands
+   daiPhatProgramOn(pieces, repeats) / daiPhatProgramOff() travel over
+   the same channels (Supabase first-class, BroadcastChannel fallback).
+   Program mode plays ONLY the chosen pieces in order, repeats 1/2/3 or
+   forever (0), with the normal daiPhatGap between pieces; after the
+   final repeat the bed keeps running and the room waits
+   (state.program.finished). The program config survives a room reload
+   (localStorage 'phong-live-dp-program-v1'); playback never
+   auto-resumes after a reload. daiPhatNext advances inside the
+   program; daiPhatPlay(i) plays i now, then the program continues
+   after i in program order; daiPhatClose plays the close piece and
+   the program resumes after it (same as an out-of-program play).
+   Program OFF restores the auto-rotation. See REPORT.md.
    State hook (same shape as dai-phat.html's window.DaiPhat.state,
    plus room extras) + proactive push over BroadcastChannel
    'phong-live-v0.1' ({type:'daiPhatState', state}) and over the
@@ -1256,8 +1405,36 @@ const dp = {
   lifeQueue: [], sutraQueue: [], cycleStep: 0, readingsDone: 0,
   gapSeconds: 180, gapTimer: null, gapEndsAt: 0, currentItem: null,
   bed: 'none', /* 'file' | 'pad' | 'none' */
-  bc: null,
+  bc: null, playGen: 0, /* v0.1.28: generation counter for dpPlayItem — see below */
+  /* v0.1.28 (#39): programmable playlist board. program.on = the room
+     plays ONLY program.pieces in order (no welcome-first, no remind
+     insertion, no rotation loop); repeats 1/2/3, or 0 = loop forever.
+     pos = index into pieces of the piece currently playing (or the last
+     program piece played, while in a gap), -1 when idle/finished.
+     cycle = current cycle (1-based). finished = the final repeat is
+     done; the bed keeps running and the room waits. The CONFIG
+     (on/pieces/repeats) survives a reload via localStorage; progress
+     (pos/cycle/finished) restarts from cycle 1 on the next daiPhatOn. */
+  program: { on: false, pieces: [], repeats: 1, pos: -1, cycle: 1, finished: false },
 };
+const DP_PROGRAM_KEY = 'phong-live-dp-program-v1'; /* v0.1.28 (#39) */
+function dpSaveProgram() { /* persist the CONFIG only, never progress */
+  try { localStorage.setItem(DP_PROGRAM_KEY, JSON.stringify({ on: dp.program.on, pieces: dp.program.pieces, repeats: dp.program.repeats })); } catch (e) {}
+}
+function dpLoadProgram() { /* restore the CONFIG at boot; broadcast stays off until daiPhatOn */
+  try {
+    const saved = JSON.parse(localStorage.getItem(DP_PROGRAM_KEY) || 'null');
+    if (saved && Array.isArray(saved.pieces)) {
+      const valid = saved.pieces.map((p) => Math.floor(Number(p))).filter((i) => Number.isFinite(i) && i >= 0 && i < 21);
+      if (valid.length) {
+        dp.program.on = !!saved.on;
+        dp.program.pieces = valid;
+        dp.program.repeats = [0, 1, 2, 3].includes(Math.floor(Number(saved.repeats))) ? Math.floor(Number(saved.repeats)) : 1;
+      }
+    }
+  } catch (e) {}
+}
+dpLoadProgram();
 try { dp.bc = new BroadcastChannel('phong-live-v0.1'); } catch (e) {}
 function dpBedLevel() { return DP_BED_VOL * 0.24; } /* 0.132 full, 0.033 ducked */
 /* v0.1.27: Supabase Realtime cross-device channel — same project as
@@ -1288,7 +1465,14 @@ dpVoiceEl.preload = 'auto'; dpVoiceEl.volume = 1;
 dpVoiceEl.addEventListener('ended', () => {
   if (dpVoiceStopExpected || !dpVoiceActive) return;
   dpVoiceActive = false;
-  dpDuck(false); dp.readingsDone++; dpScheduleGap(); dpSetMediaBed(); dpPushState();
+  dpDuck(false);
+  if (dp.program.on) {
+    if (dp.program.finished) { dpSetMediaBed(); dpPushState(); return; } /* v0.1.28: finished program waits — bed only, no scheduling */
+    dpScheduleGap(); /* program path: the gap timer calls dpProgramNext */
+  } else {
+    dp.readingsDone++; dpScheduleGap(); /* rotation path */
+  }
+  dpSetMediaBed(); dpPushState();
 });
 dpVoiceEl.addEventListener('error', () => {
   /* a piece file missing/broken: skip it, keep the rotation going */
@@ -1439,6 +1623,14 @@ function dpState() {
     audioBlocked: dp.audioBlocked,
     engine: 'audio', /* v0.1.27: real <audio> elements + Media Session */
     supabase: plSbStatus, /* v0.1.27: 'off' | 'connecting' | 'connected' | 'error' */
+    /* v0.1.28 (#39): program state — position is a 0-based index into
+       pieces (-1 when idle/finished), cycle is 1-based (0 when off). */
+    program: {
+      on: dp.program.on, pieces: dp.program.pieces.slice(), repeats: dp.program.repeats,
+      position: (dp.program.on && !dp.program.finished) ? dp.program.pos : -1,
+      cycle: dp.program.on ? dp.program.cycle : 0,
+      finished: dp.program.finished,
+    },
   };
 }
 async function dpPlayItem(item) {
@@ -1446,10 +1638,27 @@ async function dpPlayItem(item) {
   dp.currentItem = item; dpRefill();
   dpStopVoice(); dpDuck(true);
   dpVoiceStopExpected = false; dpVoiceActive = true;
-  dpVoiceEl.src = item.file;
+  /* v0.1.28 (#39): replaying the SAME file the element already has
+     (re-applying a program whose first piece is already playing, or
+     pressing Play on the piece that is playing) — seek to 0 instead of
+     re-assigning src, so the element is not reset and reloaded. */
+  if (dpVoiceEl.getAttribute('src') === item.file) {
+    try { dpVoiceEl.currentTime = 0; } catch (e) {}
+  } else {
+    dpVoiceEl.src = item.file;
+  }
   dpSetMedia(item.title);
+  /* v0.1.28: play() is async and a LATER dpPlayItem can start while an
+     earlier play() is still pending (the element is still loading). When
+     the earlier play() is then interrupted (pause() in dpStopVoice), it
+     rejects with AbortError — and its catch must NOT clobber the newer
+     play's dpVoiceActive. The currentItem guard cannot tell them apart
+     when both plays are the SAME piece, so each play() carries a
+     generation number; a stale play() (success or failure) is ignored. */
+  const myGen = ++dp.playGen;
   try { await dpVoiceEl.play(); }
   catch (e) {
+    if (myGen !== dp.playGen) return; /* stale — a newer dpPlayItem owns the element now */
     if (dp.currentItem !== item) return; /* replaced while starting — the new item owns the element */
     dpVoiceActive = false; dpDuck(false);
     if (e && e.name === 'NotAllowedError') {
@@ -1459,6 +1668,7 @@ async function dpPlayItem(item) {
     if (e && e.name === 'AbortError') return; /* interrupted by a stop/next */
     dpScheduleGap(5); dpPushState(); return;
   }
+  if (myGen !== dp.playGen) return; /* stale success — a newer dpPlayItem owns the element now */
   if (!dp.started || dp.currentItem !== item) return;
   dpPushState();
 }
@@ -1466,7 +1676,35 @@ function dpScheduleGap(seconds) {
   const gap = seconds || dp.gapSeconds;
   dp.gapEndsAt = Date.now() + gap * 1000;
   clearTimeout(dp.gapTimer);
-  dp.gapTimer = setTimeout(dpNextReading, gap * 1000);
+  dp.gapTimer = setTimeout(dpNextAfterGap, gap * 1000);
+}
+/* v0.1.28 (#39): after a music gap, the program (if on) decides the
+   next piece; otherwise the auto-rotation decides. */
+function dpNextAfterGap() {
+  if (!dp.started) return;
+  if (dp.program.on && !dp.program.finished) dpProgramNext();
+  else dpNextReading();
+}
+/* v0.1.28 (#39): advance one step inside the program. pos is the index
+   into pieces of the piece just played (or -1 before the first one, or
+   the last program piece when an out-of-program piece was played via
+   daiPhatPlay/daiPhatClose — the program then resumes after it).
+   After the final repeat the program is finished: the bed keeps running
+   and the room waits (no scheduling, state.program.finished = true). */
+function dpProgramNext() {
+  if (!dp.started || !dp.program.on || dp.program.finished) return;
+  let next = dp.program.pos + 1;
+  if (next >= dp.program.pieces.length) {
+    dp.program.cycle++;
+    if (dp.program.repeats !== 0 && dp.program.cycle > dp.program.repeats) {
+      dp.program.finished = true; dp.program.pos = -1;
+      dpSetMediaBed(); dpPushState();
+      return;
+    }
+    next = 0;
+  }
+  dp.program.pos = next;
+  dpPlayItem(dp.playlist[dp.program.pieces[next]]);
 }
 function dpNextReading() {
   if (!dp.started) return;
@@ -1540,7 +1778,15 @@ async function dpDaiPhatOn() {
     }
   }
   const welcome = dp.playlist.find(p => p.kind === 'welcome');
-  if (welcome) dpPlayItem(welcome);
+  if (dp.program.on && dp.program.pieces.length) {
+    /* v0.1.28 (#39): a stored/applied program replaces the welcome +
+       rotation — the program plays its pieces in order from cycle 1. */
+    dp.program.pieces = dp.program.pieces.filter((i) => i >= 0 && i < dp.playlist.length);
+    if (dp.program.pieces.length) {
+      dp.program.cycle = 1; dp.program.pos = -1; dp.program.finished = false;
+      dpProgramNext();
+    } else { dp.program.on = false; dpSaveProgram(); if (welcome) dpPlayItem(welcome); else if (dp.playlist.length) dpScheduleGap(20); }
+  } else if (welcome) dpPlayItem(welcome);
   else if (dp.playlist.length) dpScheduleGap(20);
   dpPushState();
   return Object.assign({ ok: true }, dpState());
@@ -1555,14 +1801,22 @@ function dpDaiPhatOff() {
   /* fresh rotation on the next start: welcome plays again, then the
      life/sutra/breath cycle restarts from step 0 */
   dp.cycleStep = 0; dp.readingsDone = 0; dp.lifeQueue = []; dp.sutraQueue = [];
+  /* v0.1.28 (#39): program PROGRESS restarts from cycle 1 on the next
+     daiPhatOn, but the CONFIG (on/pieces/repeats) is kept — it survives
+     in localStorage and takes effect when the broadcast is turned on. */
+  dp.program.pos = -1; dp.program.cycle = 1; dp.program.finished = false;
   dpPushState();
   return Object.assign({ ok: true }, dpState());
 }
 function dpDaiPhatNext() {
   if (!dp.started) return Object.assign({ ok: false, loi: 'dai phat chua bat' }, dpState());
+  if (dp.program.on && dp.program.finished)
+    return Object.assign({ ok: false, loi: 'chuong trinh da xong — ap dung lai chuong trinh hoac tat che do chuong trinh' }, dpState());
   clearTimeout(dp.gapTimer);
   dpStopVoice();
-  dpDuck(false); dpNextReading(); dpPushState();
+  dpDuck(false);
+  if (dp.program.on) dpProgramNext(); else dpNextReading(); /* v0.1.28: Next advances INSIDE the program */
+  dpPushState();
   return Object.assign({ ok: true }, dpState());
 }
 function dpDaiPhatPlay(index) {
@@ -1572,7 +1826,16 @@ function dpDaiPhatPlay(index) {
     return Object.assign({ ok: false, loi: 'chi so doan khong hop le: ' + index }, dpState());
   clearTimeout(dp.gapTimer);
   dpStopVoice();
-  dpDuck(false); dpPlayItem(dp.playlist[i]); dpPushState();
+  dpDuck(false);
+  if (dp.program.on && !dp.program.finished) {
+    /* v0.1.28 (#39): play piece i now; the program then continues from
+       the next piece after i in program order (if i is in the program).
+       If i is NOT in the program, pos is unchanged — the program
+       resumes after the last program piece played. */
+    const k = dp.program.pieces.indexOf(i);
+    if (k >= 0) dp.program.pos = k;
+  }
+  dpPlayItem(dp.playlist[i]); dpPushState();
   return Object.assign({ ok: true }, dpState());
 }
 function dpDaiPhatClose() {
@@ -1589,6 +1852,55 @@ function dpDaiPhatGap(seconds) {
   if (!Number.isFinite(s) || s < 10 || s > 900)
     return { ok: false, loi: 'khoang nghi phai tu 10 den 900 giay', gap: dp.gapSeconds };
   dp.gapSeconds = s; dpPushState();
+  return Object.assign({ ok: true }, dpState());
+}
+/* ---------- v0.1.28 (#39): programmable playlist board ----------
+   daiPhatProgramOn(pieces, repeats): pieces = array of playlist indices
+   (in the order to play), repeats = 1/2/3, or 0 = loop forever. The
+   program plays ONLY those pieces, in order, with the normal daiPhatGap
+   between pieces; after the final repeat the bed keeps running and the
+   room waits (state.program.finished). Applying while the broadcast is
+   ON starts the program immediately from cycle 1 (current piece is
+   stopped); applying while OFF only stores it — it takes effect on the
+   next daiPhatOn. The config is saved to localStorage and survives a
+   room-page reload (progress does not — playback never auto-resumes
+   after a reload, browsers block autoplay). Both commands travel over
+   the same runCommand() path as every other command, so Supabase
+   (first-class) and BroadcastChannel (fallback) both carry them.
+   daiPhatProgramOff(): the current piece (if any) plays out, then the
+   auto-rotation resumes; if the program was already finished, the
+   rotation resumes after the normal music gap. */
+async function dpDaiPhatProgramOn(pieces, repeats) {
+  if (!dp.playlist.length) {
+    try { dp.playlist = await (await fetch('playlist.json', { cache: 'no-store' })).json(); }
+    catch (e) { dp.playlist = []; }
+  }
+  const n = dp.playlist.length || 21;
+  const valid = [];
+  for (const p of (Array.isArray(pieces) ? pieces : [])) {
+    const i = Math.floor(Number(p));
+    if (Number.isFinite(i) && i >= 0 && i < n && !valid.includes(i)) valid.push(i);
+  }
+  if (!valid.length) return Object.assign({ ok: false, loi: 'chuong trinh rong — chon it nhat 1 doan doc' }, dpState());
+  let r = Math.floor(Number(repeats));
+  if (![0, 1, 2, 3].includes(r)) r = 1;
+  dp.program.on = true; dp.program.pieces = valid; dp.program.repeats = r;
+  dp.program.pos = -1; dp.program.cycle = 1; dp.program.finished = false;
+  dpSaveProgram();
+  if (dp.started) {
+    clearTimeout(dp.gapTimer);
+    dpStopVoice(); dpDuck(false);
+    dpProgramNext(); /* start from pieces[0] immediately */
+  }
+  dpPushState();
+  return Object.assign({ ok: true }, dpState());
+}
+function dpDaiPhatProgramOff() {
+  const wasFinished = dp.program.finished;
+  dp.program.on = false; dp.program.finished = false; dp.program.pos = -1; dp.program.cycle = 0;
+  dpSaveProgram();
+  if (dp.started && wasFinished) dpScheduleGap(); /* finished program was waiting — resume rotation after the normal gap */
+  dpPushState();
   return Object.assign({ ok: true }, dpState());
 }
 /* Any tap on the room page retries audio after a NotAllowedError block. */
@@ -1663,6 +1975,7 @@ window.__dpTest = {
   bedVol: () => +dpBedEl.volume.toFixed(3),
   voiceOn: () => dpPlaying(),
   voiceSrc: () => (dpVoiceEl.currentSrc || dpVoiceEl.src || '').split('/').pop(),
+  program: () => JSON.parse(JSON.stringify(dp.program)), /* v0.1.28: diagnostic copy of the program state */
   mediaSession: () => ('mediaSession' in navigator && navigator.mediaSession.metadata)
     ? { title: navigator.mediaSession.metadata.title, artist: navigator.mediaSession.metadata.artist, state: navigator.mediaSession.playbackState }
     : null,
@@ -1677,8 +1990,8 @@ window.PhongLive = {
   raLay: (ten) => doRaLay(ten),
   xinXam: (ten) => doXinXam(ten),
   veCho: (ten) => doVeCho(ten),
-  thienNhom: () => { deepMeditation = true; breathTarget = 0.45; return { ok: true }; },
-  ngungThien: () => { deepMeditation = false; breathTarget = 1; return { ok: true }; },
+  thienNhom: () => { deepMeditation = true; return { ok: true }; },
+  ngungThien: () => { deepMeditation = false; return { ok: true }; },
   trangThai: () => doTrangThai(),
   cameraToanCanh, cameraVungPhat,
   khungPhat: (on) => setKhungPhat(on),
@@ -1694,10 +2007,14 @@ window.PhongLive = {
   daiPhatClose: () => dpDaiPhatClose(),
   daiPhatGap: (s) => dpDaiPhatGap(s),
   daiPhatState: () => dpState(),
+  /* v0.1.28 (#39): programmable playlist board — same runCommand path,
+     so Supabase + BroadcastChannel both carry these commands. */
+  daiPhatProgramOn: (pieces, repeats) => dpDaiPhatProgramOn(pieces, repeats),
+  daiPhatProgramOff: () => dpDaiPhatProgramOff(),
   ready: new Promise((res) => readyCallbacks.push(res)),
 };
 /* Debug/diagnostic handle for whoever verifies the build (not a UI). */
-window.__plDebug = { scene, camera, renderer, THREE };
+window.__plDebug = { scene, camera, renderer, THREE, actors };
 /* The same commands over BroadcastChannel / postMessage, so a separate
    control tab can drive a broadcast tab that shows only the scene. */
 function runCommand(cmd, args) {
@@ -1818,10 +2135,10 @@ SEED_FAKE.forEach(([si, name]) => {
   seat.actor = actor; actors.set(name, actor);
   actor.group.position.set(seat.x, 0.16, seat.z);
   actor.group.rotation.y = Math.PI;
-  actor.body.scale.y = 0.68; actor.tag.position.y = 1.28; actor.seated = true;
+  actor.tag.position.y = TAG_Y_SEAT; actor.seated = true;
 });
 
-/* ---------- main loop: breathing, sway, glow, lantern flicker ---------- */
+/* ---------- main loop: mixers, glow, lantern flicker ---------- */
 const clock = new THREE.Clock();
 let elapsed = 0;
 function animate() {
@@ -1829,17 +2146,12 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.1);
   elapsed += dt;
   stepTweens(dt);
-  breathFactor = lerp(breathFactor, breathTarget, dt * 1.5);
+  /* v0.1.31: advance every actor's animation mixer (meditate / idle /
+     walk / bow / sit). The old body.scale.y breathing squash and sway
+     are gone — the clips carry the motion now; scaling a skinned body
+     would squash the skeleton. */
   for (const actor of actors.values()) {
-    if (actor.busy) continue;
-    if (actor.seated) {
-      const b = Math.sin(elapsed * 1.15 * breathFactor + actor.phase);
-      actor.body.scale.y = 0.68 * (1 + b * 0.018);
-      actor.body.rotation.z = Math.sin(elapsed * 0.5 * breathFactor + actor.phase) * 0.008;
-    } else if (actor.out === 'dang cho') {
-      /* waiting at the bow point: a barely-there standing sway */
-      actor.body.rotation.z = Math.sin(elapsed * 0.6 + actor.phase) * 0.006;
-    }
+    if (actor.mixer) actor.mixer.update(dt);
   }
   for (const s of seats) {
     const target = deepMeditation && s.actor ? 0.5 : 0;
@@ -1879,7 +2191,7 @@ function liftVeil() {
   document.getElementById('loading').classList.add('done');
   readyCallbacks.splice(0).forEach((res) => res(true));
 }
-monkWaiters.push(liftVeil);
+girlWaiters.push(liftVeil);
 setTimeout(liftVeil, 12000);
 </script>
 </body>
