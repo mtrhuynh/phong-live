@@ -1,6 +1,6 @@
 /* Phong Live service worker: cache the app shell and models on first visit
    so the hall reopens fast and full-screen from the home screen. */
-const CACHE = 'phong-live-cache-37'; /* v0.1.34: PROPER merge — v0.1.30 base (#36 Wake Lock, #37 bed-set rotation, #38 piece-18 pauses, #40 bed watchdog) + #39 program board + #46 girl actors (3.0 m, carpet 0.45 m). cache-36 was the v0.1.33 size fix on the wrong base. */
+const CACHE = 'phong-live-cache-38'; /* v0.1.35 (#62): idle demo + ambient activity cycle. v0.1.34 was the PROPER merge — v0.1.30 base (#36 Wake Lock, #37 bed-set rotation, #38 piece-18 pauses, #40 bed watchdog) + #39 program board + #46 girl actors (3.0 m, carpet 0.45 m). */
 const CORE = [
   'index.html', 'control.html', 'dai-phat.html', 'xam-data.js',
   'playlist.json', 'audio/bed.mp3',

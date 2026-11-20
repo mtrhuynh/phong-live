@@ -1292,6 +1292,177 @@ function doTrangThai() {
     vungPhat: STREAM_ZONE,
     khungPhat: streamFrame,
     bangThongBao: boardOn,
+    demo: { active: demoActive, actor: demoActorName, ambient: ambientActorName },
+  };
+}
+
+/* =====================================================================
+   v0.1.35 (Anita, ticket #62, 2026-11-20): IDLE DEMO + AMBIENT CYCLE
+   TikTok flagged the live "low quality content (static screen)" after
+   10 min, and viewers need to see what "lay" / "xin que" does. Two
+   mechanisms, both reusing the existing clips and action path:
+
+   1. FEATURED DEMO — when no real guest action has arrived for ~5 min,
+      ONE seated fake actor demos the full sequence through the EXISTING
+      public functions: doRaLay (seat -> carpet -> 3 bows -> wait) then
+      doXinXam (anchor -> sit still -> draw -> return to seat). No new
+      animation path, no new model, no new name on the board (the demo
+      actor is an already-seated fake), and NO demo label anywhere
+      (Anita, #62 cmt 7042050932, 2026-11-20 21:27 — the demo blends in
+      exactly like a real guest action; this supersedes the ticket
+      body's "ĐANG LÀM MẪU" label and its acceptance item 3).
+
+   2. AMBIENT CYCLE — at gentle, staggered intervals (one actor every
+      1–2 min) a seated fake stands up at its seat, bows once in place
+      (or just stands a while), and sits back down to meditate — using
+      only the existing standUp / playBow / sitDown primitives. The
+      room never reads as a frozen screen, but stays calm and sparse.
+      Ambient actors never use the carpet, so they can never clash
+      with a raLay/xinXam booking of the mat.
+
+   PRIORITY — real commands always win:
+   - The demo only starts when the mat is free (nguoiDangLay null).
+     If a real raLay wins the race, doRaLay rejects the demo with
+     'co nguoi dang lay' and the demo stops quietly.
+   - A real raLay arriving WHILE a demo holds the mat is QUEUED in
+     runCommand until the demo finishes (bounded 120 s), then runs
+     normally — never rejected by the demo, never double-books the
+     mat, never leaves a stuck actor.
+   - The demo's own doRaLay/doXinXam calls bypass runCommand, so
+     they do not reset the idle clock mid-demo; the clock resets once
+     when the demo finishes (otherwise demos would chain back to
+     back). The ambient cycle never resets the idle clock (otherwise
+     the demo could never fire).
+   - Ambient actors are fakes only, so a real guest's command can
+     never target one (names are unique — doAddPhatTu rejects
+     duplicates). An ambient actor is marked busy during its cycle.
+   - Neither mechanism runs while the group is in deep meditation
+     (thienNhom) — the meditation mode stays pure.
+
+   TEST OVERRIDE (never shipped shortened): load the room with
+   ?demotest=1 to use a 3 s idle threshold and 5–8 s ambient gaps.
+   window.PhongLive.__demoNow() / __ambientNow() run one of each on
+   demand; __demoState() reports the scheduler state. The delivered
+   default stays ~5 min idle / 1–2 min ambient. */
+const DEMO_IDLE_MS = 5 * 60 * 1000;      /* ~5 min of no real guest action */
+const DEMO_CHECK_MS = 5000;              /* scheduler tick */
+const DEMO_QUEUE_WAIT_MS = 120000;       /* max a real raLay waits for a demo */
+const AMBIENT_MIN_MS = 60 * 1000;        /* one gentle move every 1–2 min */
+const AMBIENT_MAX_MS = 120 * 1000;
+const DEMO_TEST = new URLSearchParams(location.search).has('demotest');
+const DEMO_OFF = new URLSearchParams(location.search).has('demooff'); /* test/verify aid: scheduler inert */
+const DEMO_IDLE_TEST_MS = 3000;          /* test only: demo after 3 s idle */
+const AMBIENT_TEST_MIN_MS = 5000;        /* test only: ambient every 5–8 s */
+const AMBIENT_TEST_MAX_MS = 8000;
+let lastGuestActionAt = Date.now();      /* real guest-action commands reset this */
+let demoActive = false;                  /* a demo holds the mat right now */
+let demoActorName = null;                /* name of the actor doing the demo */
+let demoDonePromise = null;              /* resolves when the current demo ends */
+let demoDoneResolve = null;
+let ambientActorName = null;             /* name of the actor in an ambient cycle */
+let ambientNextAt = 0;                   /* next ambient cycle time */
+const GUEST_ACTION_CMDS = ['addPhatTu', 'removePhatTu', 'raLay', 'xinXam', 'veCho', 'thienNhom', 'ngungThien'];
+/* Eligible actors for demo / ambient: already seated fakes, idle, not
+   the one currently out bowing, not in the other mechanism. Real guests
+   are never puppeted — their names are theirs. */
+function demoCandidates() {
+  const out = [];
+  for (const s of seats) {
+    const a = s.actor;
+    if (!a || !a.isFake || a.busy || !a.seated || a.dead) continue;
+    if (nguoiDangLay === a.name) continue;
+    if (ambientActorName === a.name) continue;
+    out.push(a);
+  }
+  return out;
+}
+function ambientCandidates() {
+  const out = [];
+  for (const s of seats) {
+    const a = s.actor;
+    if (!a || !a.isFake || a.busy || !a.seated || a.dead) continue;
+    if (nguoiDangLay === a.name) continue;
+    if (demoActive && demoActorName === a.name) continue;
+    if (ambientActorName === a.name) continue;
+    out.push(a);
+  }
+  return out;
+}
+/* The featured demo: the full guest sequence via the EXISTING public
+   functions — doRaLay then doXinXam — so the demo walks, bows and
+   draws exactly like a real guest. Returns {ok} / {ok:false, loi}. */
+async function runDemo() {
+  if (demoActive || nguoiDangLay || deepMeditation) return { ok: false, loi: 'dang ban' };
+  const cands = demoCandidates();
+  if (!cands.length) { lastGuestActionAt = Date.now(); return { ok: false, loi: 'khong co dien vien' }; }
+  const actor = cands[Math.floor(Math.random() * cands.length)];
+  demoActive = true; demoActorName = actor.name;
+  demoDonePromise = new Promise((res) => { demoDoneResolve = res; });
+  try {
+    const r1 = await doRaLay(actor.name);
+    if (!r1.ok) return { ok: false, loi: r1.loi }; /* a real raLay won the race */
+    const r2 = await doXinXam(actor.name);
+    if (r2 && r2.ok === false) return { ok: false, loi: r2.loi };
+    return { ok: true, ten: actor.name, que: r2 ? r2.soQue : null };
+  } finally {
+    demoActive = false; demoActorName = null;
+    lastGuestActionAt = Date.now(); /* demo counts as activity — next demo ≥5 min later */
+    if (demoDoneResolve) demoDoneResolve();
+    demoDonePromise = null; demoDoneResolve = null;
+  }
+}
+/* One ambient cycle at the actor's own seat — never the carpet. Two
+   gentle variants, picked at random: stand -> bow once -> sit, or
+   stand a while -> sit. Uses only standUp / playBow / sitDown. */
+async function runAmbient() {
+  if (ambientActorName || deepMeditation) return { ok: false, loi: 'dang ban' };
+  const cands = ambientCandidates();
+  if (!cands.length) return { ok: false, loi: 'khong co dien vien' };
+  const actor = cands[Math.floor(Math.random() * cands.length)];
+  ambientActorName = actor.name; actor.busy = true;
+  const variant = Math.random() < 0.5 ? 'bow' : 'stand';
+  try {
+    actor.group.position.y = 0; /* seated actors rest at y 0.16 (cushion) — feet on the floor to stand */
+    await standUp(actor);
+    if (variant === 'bow') await playBow(actor);
+    else await tween(3, () => {});
+    actor.group.position.y = 0.16;
+    await sitDown(actor);
+    return { ok: true, ten: actor.name, kieu: variant };
+  } finally {
+    actor.busy = false;
+    ambientActorName = null;
+    /* gap is measured from the END of a cycle, not its start — so the
+       room always gets a real calm gap between moves, even when the
+       test-mode gap (5–8 s) is shorter than a cycle (~6–10 s). */
+    ambientNextAt = Date.now() + ambientDelayMs();
+  }
+}
+function ambientDelayMs() {
+  const lo = DEMO_TEST ? AMBIENT_TEST_MIN_MS : AMBIENT_MIN_MS;
+  const hi = DEMO_TEST ? AMBIENT_TEST_MAX_MS : AMBIENT_MAX_MS;
+  return lo + Math.random() * (hi - lo);
+}
+function demoTick() {
+  if (DEMO_OFF) return; /* scheduler inert (?demooff=1) — base verification runs undisturbed */
+  const now = Date.now();
+  const idleMs = DEMO_TEST ? DEMO_IDLE_TEST_MS : DEMO_IDLE_MS;
+  if (!demoActive && !nguoiDangLay && !deepMeditation && now - lastGuestActionAt >= idleMs) {
+    runDemo().catch(() => {});
+  }
+  if (!ambientNextAt) ambientNextAt = now + ambientDelayMs();
+  if (now >= ambientNextAt && !ambientActorName && !deepMeditation) {
+    /* runAmbient's finally schedules the NEXT cycle (gap from cycle end) */
+    runAmbient().catch(() => {});
+  }
+}
+setInterval(demoTick, DEMO_CHECK_MS);
+function demoState() {
+  return {
+    demoActive, demoActor: demoActorName, ambientActor: ambientActorName,
+    idleMs: Date.now() - lastGuestActionAt,
+    demoIdleMs: DEMO_TEST ? DEMO_IDLE_TEST_MS : DEMO_IDLE_MS,
+    testMode: DEMO_TEST,
   };
 }
 
@@ -2011,17 +2182,37 @@ window.PhongLive = {
      so Supabase + BroadcastChannel both carry these commands. */
   daiPhatProgramOn: (pieces, repeats) => dpDaiPhatProgramOn(pieces, repeats),
   daiPhatProgramOff: () => dpDaiPhatProgramOff(),
+  /* v0.1.35 (#62): idle demo + ambient cycle — test hooks only (no UI).
+     __demoNow runs one featured demo now; __ambientNow runs one
+     ambient cycle now; __demoState reports the scheduler state. */
+  __demoNow: () => runDemo(),
+  __ambientNow: () => runAmbient(),
+  __demoState: () => demoState(),
   ready: new Promise((res) => readyCallbacks.push(res)),
 };
 /* Debug/diagnostic handle for whoever verifies the build (not a UI). */
 window.__plDebug = { scene, camera, renderer, THREE, actors };
 /* The same commands over BroadcastChannel / postMessage, so a separate
    control tab can drive a broadcast tab that shows only the scene. */
-function runCommand(cmd, args) {
+async function runCommand(cmd, args) {
   const api = window.PhongLive;
-  if (typeof api[cmd] === 'function') return Promise.resolve(api[cmd].apply(null, args || []));
-  return Promise.resolve({ ok: false, loi: 'lenh khong ton tai' });
+  if (typeof api[cmd] !== 'function') return { ok: false, loi: 'lenh khong ton tai' };
+  /* v0.1.35 (#62): a real guest-action command resets the demo idle
+     clock — only REAL activity counts (the demo / ambient cycle never
+     reset it, or the demo could never fire). */
+  if (GUEST_ACTION_CMDS.indexOf(cmd) >= 0) lastGuestActionAt = Date.now();
+  /* v0.1.35 (#62): a real raLay arriving while a demo holds the mat
+     waits for the demo to finish (bounded), then runs normally — the
+     demo never rejects a real guest, never double-books the mat. */
+  if (cmd === 'raLay' && demoActive && demoDonePromise) {
+    try { await Promise.race([demoDonePromise, new Promise((res) => setTimeout(res, DEMO_QUEUE_WAIT_MS))]); } catch (e) {}
+  }
+  return api[cmd].apply(null, args || []);
 }
+/* v0.1.35 (#62): debug handle for the verifier (same pattern as
+   window.__plDebug above) — the exact runCommand the BC / postMessage /
+   Supabase paths call, so the demo queue can be driven directly. */
+window.__plDebug.runCommand = runCommand;
 try {
   const bc = new BroadcastChannel('phong-live-v0.1');
   bc.onmessage = (ev) => {
