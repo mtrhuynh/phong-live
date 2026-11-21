@@ -1,38 +1,77 @@
-Phong Live v0.1.35 - Idle demo + ambient activity cycle (ticket #62)
-Trang ordered BUILD 2026-11-20 ~23:41 +07 ("Lam #62 luon di").
+Phong Live v0.1.37 - Name-swap queue + nearest seat first (#64 follow-up)
+Trang ordered BUILD 2026-11-21 ~14:16 +07 ("lam thu di"), with two
+corrections 14:24 + 14:28 (swap, not recall; queue, not a single swap).
 
-Base: v0.1.34 (Drive folder phong-live-v0.1.34/, cache-37) — the verified
-test-link build. KEEPS everything v0.1.34 had:
+Base: v0.1.36 (Drive folder phong-live-v0.1.36/, cache-39) — delivered
+2026-11-21 ~13:29, self-test 90 PASS 0 FAIL, waiting for Cuu
+verification. KEEPS everything v0.1.36 had:
   #36 Wake Lock, #37 bed-set rotation (7 bed-*.mp3), #38 piece-18 pauses
   (audio/18.mp3 1,348,380 B), #40 bed watchdog (4 s), #39 program board,
-  #46 girl actors FEMALE ONLY 3.0 m / carpet 0.45 m, #29 Supabase
-  cross-device channel 'phong-live:room', 24 fake devotees + replacement.
+  #46 girl actors FEMALE ONLY 3.0 m, #29 Supabase cross-device channel
+  'phong-live:room', #62 idle demo + ambient cycle, #64 continuous demo
+  pipeline (15 s cadence, distance-aware departures, rising wave,
+  fade-out return, fortune persists 2 min), carpet 2.4 m, cushions
+  0.40 m x 0.01 m, 24 fake devotees + replacement.
 
-New in v0.1.35 (#62, Anita 2026-11-20):
-  - Featured demo: after ~5 min with no real guest action, ONE seated
-    fake actor demos the full sequence through the EXISTING public
-    functions — doRaLay (seat -> carpet -> 3 bows -> wait) then
-    doXinXam (anchor -> sit still -> draw -> return to seat). No new
-    animation path, no new model, no new name on the board, and NO demo
-    label anywhere (Anita's correction, #62 cmt 7042050932 — the demo
-    blends in exactly like a real guest action; this supersedes the
-    ticket body's "DANG LAM MAU" label and its acceptance item 3).
-  - Ambient cycle: one seated fake every 1-2 min stands up at its seat,
-    bows once in place (or just stands a while), and sits back down to
-    meditate — existing standUp / playBow / sitDown only, never the
-    carpet, so it can never clash with a raLay/xinXam mat booking.
-  - Priority: a real raLay arriving while a demo holds the mat is QUEUED
-    in runCommand until the demo finishes (bounded 120 s), then runs
-    normally — never rejected by the demo, never double-books the mat.
-    The demo only starts when the mat is free; if a real raLay wins the
-    race, the demo stops quietly. Neither mechanism runs during group
-    deep meditation (thienNhom).
-  - Test hooks only (no UI): load with ?demotest=1 for a 3 s idle
-    threshold + 5-8 s ambient gaps; ?demooff=1 makes the scheduler
-    inert (base verification aid). window.PhongLive.__demoNow() /
-    __ambientNow() / __demoState().
+Why this build: in v0.1.36 a real "lay" arriving mid-pipeline waited
+74 s — runCommand awaited the drain of ALL in-flight demo turns
+(up to 4 planned turns x ~20 s each). Trang: one turn is 20 s
+(walk ~5 + bow 3 + draw 2 + wait 10) — a real guest should wait at
+most ONE turn, not four.
 
-Only index.html + sw.js changed vs v0.1.34 (docs + renders refreshed).
-sw cache-38. See REPORT.md + KODA_GHI_CHU.md for the change list and
-headless self-test results.
-Test link only, pending Cuu verification + Anita review.
+New in v0.1.37 (all in index.html; sw.js only cache/version):
+  - NAME-SWAP QUEUE: when a real "lay" arrives while demo turns are
+    in flight, the guest takes over the NEAREST in-flight demo
+    performer (still walking in, nearest to the one who is bowing —
+    usually a few metres away, already en route). The performer
+    takes the real guest's name (tag redrawn); the seated real-guest
+    actor takes the performer's fake name and stays put. The renamed
+    performer walks the remaining distance and performs the REAL
+    3-bow sequence, then waits for xin xam / ve cho as usual. The
+    other in-flight performers KEEP GOING (no recall) and queue
+    behind the real guest; the bower is never swapped and always
+    finishes. Each further real guest takes the next-nearest
+    still-unclaimed performer (B, then C, then D). If no performer
+    is claimable (only the bower is in flight), the guest waits for
+    the next rise (bounded 25 s) or walks from their own seat.
+    Real raLay now resolves in ~one turn (target bow start <= 20 s)
+    instead of ~74 s.
+    Consequence: the #61 listener's 65 s timeout is plenty again —
+    NO listener timeout raise is needed.
+  - GATE-RACE FIX (Cuu verified v0.1.36 FAIL, comment 7060160965):
+    3 demo performers stood on the bow point AT ONCE for ~40 s, 2
+    bowing at the same time. Root cause: the stage gate granted entry
+    by resolving the waiter's promise, but demoStageHolder was only
+    set after the final 1.05 m step (~1 s later), so a second advance
+    in that window admitted the next performer too. Fixed: the stage
+    is now CLAIMED synchronously at grant time (demoStageMaybeAdvance
+    sets demoStageHolder before resolving), and the stage-end clears
+    are guarded to what the turn still holds. The race was latent in
+    v0.1.36's gate; the swap queue (two claimed turns near the stage
+    at once) is what made it reachable. Self-test: 0 double-stage in
+    6 probe attempts, max 1 performer ON the bow point (within
+    0.3 m), max 1 bowing at a time.
+  - GATE PRIORITY for claimed turns: a swapped-in real guest jumps
+    the gate queue and waits only for the current bower to finish —
+    never for the demo turns queued behind them. Without this,
+    correct serialization made the first guest wait behind every
+    queued demo turn (50 s measured, 146 s worst case). Among claimed
+    waiters, FIFO (guest 2 waits behind guest 1's full turn: 56 s
+    measured — by design, still inside the 65 s listener timeout).
+  - NEAREST SEAT FIRST: the planner prefers the NEAREST eligible seat
+    (shortest demo path to the bow point) instead of cycling through
+    the seats in order, so most turns are ~20 s and the pipeline
+    carries fewer long walks. Fairness: a seat is not picked again
+    within the last 6 picks; far seats still get turns, just less
+    often, always with the distance-aware early departure (A8/A9).
+    Walk speed stays 1.0 m/s, never faster.
+  - Nothing else changes in normal operation (no real guest waiting):
+    15 s cadence, ~15 s arrival gaps, rising wave, fortune persists
+    2 min decoupled, carpet 2.4 m, cushions 0.40 m x 0.01 m, no demo
+    label, thienNhom pause, ambient 30-45 s, real-command priority.
+
+Only index.html + sw.js changed vs v0.1.36 (docs + renders refreshed).
+sw cache-40. See REPORT.md + KODA_GHI_CHU.md for the change list and
+headless self-test results (incl. the measured real-raLay waits table).
+Test link only, pending Cuu verification + Anita review. Cuu verifies
+v0.1.36 first, then v0.1.37.

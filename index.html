@@ -458,11 +458,13 @@ const carpetTex = canvasTexture(512, 1024, (g, W, H) => {
   g.beginPath(); g.moveTo(W - 48, 0); g.lineTo(W - 48, H); g.stroke();
   /* No centre motifs (v0.1.10): the lotus flowers were removed per Trang — they looked squished/distorted in the 9:16 view. */
 });
-/* v0.1.34 (merge; Trang 2026-11-18 00:38: the 2.4 m carpet was STILL
-   far too wide — "nằm ngủ còn dư chỗ"): width 0.45 m (in her 400-500 mm
-   range) — a thin red ribbon down the centre, not a field. Same
-   length, red, gold borders on the long sides. */
-const carpet = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 26),
+/* v0.1.36 (Anita, ticket #64, amendment 1, 2026-11-21): the aisle
+   carpet is RESTORED to its settled width 2.4 m. The 0.45 m width in
+   v0.1.33–v0.1.35 was a misapplication: Anita's "too wide" (400–500 mm)
+   was about the SEAT CUSHIONS, never the carpet — for the carpet she
+   only ever ordered the lotus flowers removed (done in v0.1.10).
+   Same length, red, gold borders on the long sides, centred x=0. */
+const carpet = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 26),
   new THREE.MeshStandardMaterial({ map: carpetTex, roughness: 0.92 }));
 carpet.rotation.x = -Math.PI / 2; carpet.position.set(0, 0.012, 2.2);
 carpet.receiveShadow = true; scene.add(carpet);
@@ -775,10 +777,10 @@ const flameMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
    two front rows fit the 9:16 frame with readable name tags.
    Rows (front, near the Buddha, to back, near the door), spacing 2.4 m:
    z = -5.4 … 9.0. Columns per side, spacing 2.0 / 2.0 m: |x| = 3.0 / 5.0 / 7.0.
-   The inner column stays clear of the carpet (edge |x| = 1.7 — inner
-   cushion centre 1.3 m off the carpet edge); the outer column stays
+   The inner column stays clear of the carpet (edge |x| = 1.2 — inner
+   cushion centre 1.8 m off the carpet edge); the outer column stays
    clear of the pillars (x = ±10.8, r 0.46 — nearest cushion centre is
-   3.8 m from a pillar centre, cushion radius 0.6 m).
+   3.8 m from a pillar centre, cushion radius 0.20 m).
    Numbering: left block first (rows front→back, inner→outer) = G01..G21,
    then the right block the same way = G22..G42. Seat order in this array
    is also the fill order for addPhatTu (lowest free code first). */
@@ -787,16 +789,24 @@ const SEAT_COLS_X = [3.0, 5.0, 7.0];
 const SEAT_POS = [];
 SEAT_ROWS_Z.forEach((z) => { SEAT_COLS_X.forEach((x) => SEAT_POS.push([-x, z])); }); /* left:  G01..G21 */
 SEAT_ROWS_Z.forEach((z) => { SEAT_COLS_X.forEach((x) => SEAT_POS.push([x, z])); });  /* right: G22..G42 */
+/* v0.1.36 (Anita, ticket #64, amendments 3+5, 2026-11-21): seat
+   cushions are 0.40 m diameter x 0.01 m thick — the "400 mm, 1 cm
+   thick" sitting mat Anita specified ("tham day 1 cm thoi"). The
+   1.12 m x 0.17 m size stood unchanged from v0.1.0 to v0.1.35 (her
+   400-500 mm figure was misapplied to the aisle carpet in v0.1.33).
+   Seated actors rest at SEAT_REST_Y = pad top (0.01 m). Knees past a
+   0.40 m pad while cross-legged are expected, not a defect. */
+const SEAT_REST_Y = 0.01;
 const seats = [];
 SEAT_POS.forEach((p, i) => {
   const code = 'G' + String(i + 1).padStart(2, '0');
   const x = p[0], z = p[1];
   const g = new THREE.Group(); g.position.set(x, 0, z); scene.add(g);
-  const base = cyl(0.56, 0.6, 0.17, MAT.cushion, 0, 0.085, 0, g, 24);
+  const base = cyl(0.20, 0.20, 0.01, MAT.cushion, 0, 0.005, 0, g, 24);
   base.receiveShadow = true;
-  const trim = new THREE.Mesh(new THREE.TorusGeometry(0.57, 0.028, 8, 28), MAT.goldSoft);
-  trim.rotation.x = Math.PI / 2; trim.position.y = 0.16; g.add(trim);
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.68, 0.86, 32),
+  const trim = new THREE.Mesh(new THREE.TorusGeometry(0.21, 0.012, 8, 28), MAT.goldSoft);
+  trim.rotation.x = Math.PI / 2; trim.position.y = 0.01; g.add(trim);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.23, 0.29, 32),
     new THREE.MeshBasicMaterial({ color: 0xffcf5e, transparent: true, opacity: 0, side: THREE.DoubleSide }));
   ring.rotation.x = -Math.PI / 2; ring.position.y = 0.02; g.add(ring);
   seats.push({ code, x, z, actor: null, ring });
@@ -875,6 +885,20 @@ function drawBoard(que) {
   boardTex.needsUpdate = true;
 }
 drawBoard(null);
+/* v0.1.36 (Anita, ticket #64, amendments 6+7, 2026-11-21): the fortune
+   stays displayed up to 2 minutes after the draw — even after the
+   drawing actor has sat back down or left the room. The display is
+   FULLY decoupled from the actor's lifecycle: it clears only on
+   (a) the 2-minute expiry, or (b) a newer draw replacing it. Nothing
+   else in the room clears the board (no clear on sit / return /
+   remove). Every draw — demo or real guest — goes through here. */
+const FORTUNE_HOLD_MS = 120000;
+let fortuneClearTimer = null;
+function showFortune(que) {
+  drawBoard(que);
+  if (fortuneClearTimer) { clearTimeout(fortuneClearTimer); fortuneClearTimer = null; }
+  fortuneClearTimer = setTimeout(() => { drawBoard(null); fortuneClearTimer = null; }, FORTUNE_HOLD_MS);
+}
 const board = new THREE.Group(); board.position.set(4.55, 0, -7.55); board.rotation.y = -0.42; board.scale.setScalar(2); scene.add(board);
 box(1.86, 1.22, 0.1, MAT.woodDark, 0, 1.25, 0, board);
 const boardFace = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 1.06),
@@ -969,6 +993,19 @@ function nameSprite(name) {
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
   sp.scale.set(1.9, 0.475, 1);
   return sp;
+}
+/* v0.1.37: redraw an actor's name tag in place (name-swap queue).
+   The sprite object and its material stay put — only the canvas
+   texture is replaced — so an in-flight fade (which captured
+   actor.tag.material) keeps fading the same sprite, and the tag
+   keeps its position / scale / opacity. The old texture is disposed. */
+function renameActorTag(actor, newName) {
+  const fresh = nameSprite(newName);
+  const oldMap = actor.tag.material.map;
+  actor.tag.material.map = fresh.material.map;
+  actor.tag.material.needsUpdate = true;
+  if (oldMap) oldMap.dispose();
+  fresh.material.dispose(); /* the shell; the texture moved to the live sprite */
 }
 function makeActor(name, seat, isFake) {
   const group = new THREE.Group(); scene.add(group);
@@ -1115,7 +1152,7 @@ async function walkInActor(actor, seat) {
   actor.group.rotation.y = Math.PI;
   await walkPath(actor, [[aisleX(seat), 13.8], [aisleX(seat), seat.z + 1.15], seatEntryPoints(seat), [seat.x, seat.z]]);
   await faceToward(actor, 0, -1, 0.4);
-  actor.group.position.y = 0.16;
+  actor.group.position.y = SEAT_REST_Y;
   await sitDown(actor);
 }
 /* Walk an actor out of their seat to the door and remove them from the room. */
@@ -1211,7 +1248,7 @@ async function returnToSeat(actor) {
   const seat = actor.seat;
   await walkPath(actor, [[0, seat.z + 1.15], seatEntryPoints(seat), [seat.x, seat.z]]);
   await faceToward(actor, 0, -1, 0.4);
-  actor.group.position.y = 0.16;
+  actor.group.position.y = SEAT_REST_Y;
   await sitDown(actor);
 }
 /* raLay: stand, walk the central axis to the bow point, bow 3 times
@@ -1243,6 +1280,7 @@ async function doVeCho(name) {
   actor.busy = true;
   await returnToSeat(actor);
   nguoiDangLay = null; actor.out = null; actor.busy = false;
+  demoReleaseRealStage(actor); /* v0.1.37: a swapped-in real guest held the demo stage gate — free it now */
   return { ok: true };
 }
 /* xinXam v0.1.1: ONLY the devotee currently waiting at the bow point may
@@ -1273,7 +1311,9 @@ async function doXinXam(name) {
     drawStick.position.y = XAM_ANCHOR.tableTopY + 0.6 + e * 0.76;
     drawStick.rotation.z = e * 0.5;
   });
-  drawBoard(que);
+  /* v0.1.36: showFortune (not drawBoard directly) — the fortune stays
+     displayed up to 2 min (amendments 6+7), decoupled from the actor. */
+  showFortune(que);
   lastQue = { soQue: que[0], tenQue: que[1], nguoi: actor.name };
   await tween(3.2, () => {}); /* a quiet beat while the board is read */
   drawStick.visible = false; drawStick.rotation.z = 0;
@@ -1281,6 +1321,7 @@ async function doXinXam(name) {
   await standFromSit(actor);
   await returnToSeat(actor);
   nguoiDangLay = null; actor.out = null; actor.busy = false;
+  demoReleaseRealStage(actor); /* v0.1.37: same stage release as veCho (the guest leaves after the draw) */
   return { soQue: que[0], tenQue: que[1] };
 }
 function doTrangThai() {
@@ -1297,123 +1338,766 @@ function doTrangThai() {
 }
 
 /* =====================================================================
-   v0.1.35 (Anita, ticket #62, 2026-11-20): IDLE DEMO + AMBIENT CYCLE
-   TikTok flagged the live "low quality content (static screen)" after
-   10 min, and viewers need to see what "lay" / "xin que" does. Two
-   mechanisms, both reusing the existing clips and action path:
+   v0.1.37 (#64 follow-up, Trang 2026-11-21 14:16 + 14:24 + 14:28):
+   NAME-SWAP QUEUE — a real guest's "lay" must not wait 74 s.
+   In v0.1.36 a real raLay arriving mid-pipeline waited ~74 s: runCommand
+   queued it until ALL in-flight demo turns drained (up to 4 planned
+   turns x ~20 s). Trang: one turn is 20 s (walk ~5 + bow 3 + draw 2 +
+   wait 10) — the guest should wait at most one turn. The first fix
+   drafted (fast drain + recall the in-flight performers) was
+   SUPERSEDED twice by Trang before it shipped:
+   - 14:24: do NOT send the mid-walk performers back — SWAP the real
+     guest's nickname onto one of them, so the guest is already en
+     route and never walks from the beginning.
+   - 14:26: do NOT recall the others either — they KEEP GOING. Swap
+     onto the one NEAREST TO THE ONE WHO IS BOWING. The bower is
+     never swapped and never recalled: fake or real, A always finishes.
+   - 14:28: the swap is a QUEUE, not a single swap: each incoming real
+     guest takes the NEAREST still-unclaimed in-flight performer (B,
+     then C, then D, in nearness order). A claimed performer cannot be
+     claimed again. Extras wait for the next performers to rise and
+     take them in order, or walk from their own seats if faster.
 
-   1. FEATURED DEMO — when no real guest action has arrived for ~5 min,
-      ONE seated fake actor demos the full sequence through the EXISTING
-      public functions: doRaLay (seat -> carpet -> 3 bows -> wait) then
-      doXinXam (anchor -> sit still -> draw -> return to seat). No new
-      animation path, no new model, no new name on the board (the demo
-      actor is an already-seated fake), and NO demo label anywhere
-      (Anita, #62 cmt 7042050932, 2026-11-20 21:27 — the demo blends in
-      exactly like a real guest action; this supersedes the ticket
-      body's "ĐANG LÀM MẪU" label and its acceptance item 3).
+   HOW IT WORKS (demoClaimForRealGuest, called from runCommand on a
+   real raLay while demo turns are in flight):
+   - PICK: the in-flight demo performer NEAREST to the bow point
+     (the bower stands there) among those still walking in (states
+     rising / walking / arrived), not yet claimed, never the bower
+     (state 'stage' is excluded). Distance is the actor's current
+     position to the bow point — the one about to take over is
+     usually a few metres away, so the bow starts within ~20 s.
+   - SWAP (demoDoSwap, synchronous — find + mark is one step, so two
+     real guests arriving together can never claim the same
+     performer): the chosen performer takes the REAL guest's name
+     (name sprite redrawn in place, isFake flips to false); the
+     seated real-guest actor takes the performer's FAKE name
+     (isFake flips to true) and stays put. The actors map (name ->
+     actor) is rebuilt, so every later command addressed by name
+     finds the right body; the seats themselves do not move — the
+     NAMES have effectively swapped seats (the real name now sits
+     where the fake was, and vice versa). The demo scheduler treats
+     the swapped fake-named seated actor as an ordinary fake
+     thereafter (it is one: seated, fake, not involved).
+   - REAL SEQUENCE: the renamed performer keeps walking the demo
+     route (it ends at the bow point) and, once the stage gate opens
+     (the bower finishes first — the gate is FIFO), performs the
+     REAL raLay sequence from that point: 3 bows (the real
+     choreography, NOT the demo's single bow), then waits at the bow
+     point ('dang cho') for xinXam / veCho exactly as doRaLay leaves
+     a real guest, and returns to the seat they came from. The other
+     in-flight performers keep their turns untouched (no recall, no
+     fade) and queue behind the real guest at the carpet edge.
+   - STAGE HOLD: the claimed turn holds the demo stage gate while
+     the real guest is out (plan.realHeld) — the turn's finally must
+     NOT release the stage/mat/out; doVeCho / doXinXam release the
+     stage (demoReleaseRealStage) when the guest leaves. demoActorName
+     is deliberately NOT set for a claimed turn, so demoCanPlan()
+     keeps blocking new planning while a real guest holds the mat.
+   - EDGE CASE (no eligible walking performer — only the bower is in
+     flight): wait for the next performer to rise (bounded 25 s) and
+     swap onto them; if no rise comes, fall back to the normal path
+     (demoHold, wait for the stage to free, the guest walks from
+     their own seat). The path taken is logged per sample.
+   - GATE-RACE FIX (self-test 2026-11-21, after the first 137/139
+     run): the stage gate granted entry by resolving the waiter's
+     promise but only set demoStageHolder after the final 1.05 m
+     step (~1 s later), so a second advance in that window admitted
+     another performer and two bodies stood at the bow point; the
+     partner's unconditional stage-end clear then stranded the real
+     guest (xinXam 'chua ra lay'). Fixed: the stage is now claimed
+     synchronously at grant time (demoStageMaybeAdvance), and the
+     stage-end clears are guarded to what the turn still holds.
+     Pre-existing latent race in the v0.1.36 gate — the swap queue
+     (two claimed turns near the stage at once) is what made it
+     reachable; the fix lives in the shared gate code, so v0.1.36's
+     demo pipeline benefits too.
+   - NEAREST SEAT FIRST (demoNextSeat, Trang's explicit instruction):
+     the planner now prefers the NEAREST eligible seat (shortest
+     demo path to the bow point) instead of cycling in seat order,
+     so most turns are ~20 s. Fairness: a seat is not picked again
+     within the last DEMO_RECENT_N = 6 picks; when every eligible
+     seat is recent, the oldest half ages out and the nearest of the
+     rest is picked. Far seats still get turns — just less often,
+     always with the distance-aware early departure (A8/A9). Walk
+     speed stays 1.0 m/s, never faster.
+   Everything else from #64 is unchanged in normal operation (no real
+   guest waiting): 15 s cadence, ~15 s arrival gaps, rising wave,
+   fortune persists 2 min decoupled, carpet 2.4 m, cushions
+   0.40 m x 0.01 m, no demo label, thienNhom pause, ambient 30-45 s.
+   Consequence: the #61 listener's 65 s timeout is plenty again —
+   NO listener timeout raise is needed.
 
-   2. AMBIENT CYCLE — at gentle, staggered intervals (one actor every
-      1–2 min) a seated fake stands up at its seat, bows once in place
-      (or just stands a while), and sits back down to meditate — using
-      only the existing standUp / playBow / sitDown primitives. The
-      room never reads as a frozen screen, but stays calm and sparse.
-      Ambient actors never use the carpet, so they can never clash
-      with a raLay/xinXam booking of the mat.
+/* =====================================================================
+   v0.1.36 (Anita, ticket #64, 2026-11-21): LIVELIER IDLE RHYTHM
+   Anita opened the v0.1.35 test link on her phone (~05:33) and saw no
+   movement at all — the #62 rhythm (demo after 5 min idle, ambient
+   every 1-2 min) is too sparse for a TikTok live. This build replaces
+   the #62 scheduler with a continuous demo PIPELINE plus the 13
+   amendments Cuu relayed from Anita (05:39-06:20). The ticket body is
+   superseded wherever an amendment says so; the supersessions are
+   marked below.
 
-   PRIORITY — real commands always win:
-   - The demo only starts when the mat is free (nguoiDangLay null).
-     If a real raLay wins the race, doRaLay rejects the demo with
-     'co nguoi dang lay' and the demo stops quietly.
-   - A real raLay arriving WHILE a demo holds the mat is QUEUED in
-     runCommand until the demo finishes (bounded 120 s), then runs
-     normally — never rejected by the demo, never double-books the
-     mat, never leaves a stuck actor.
-   - The demo's own doRaLay/doXinXam calls bypass runCommand, so
-     they do not reset the idle clock mid-demo; the clock resets once
-     when the demo finishes (otherwise demos would chain back to
-     back). The ambient cycle never resets the idle clock (otherwise
-     the demo could never fire).
-   - Ambient actors are fakes only, so a real guest's command can
-     never target one (names are unique — doAddPhatTu rejects
-     duplicates). An ambient actor is marked busy during its cycle.
-   - Neither mechanism runs while the group is in deep meditation
-     (thienNhom) — the meditation mode stays pure.
+   SUPERSESSIONS (amendment -> ticket body / earlier amendment):
+   - A1 carpet: aisle carpet RESTORED to 2.4 m (the 0.45 m cut in
+     v0.1.33 was a misapplication — Anita's "too wide" was about the
+     SEAT CUSHIONS, never the carpet). See the carpet block above.
+   - A2 cadence: DEMO_IDLE_MS = 15 s REPLACES the body's 2 min. A demo
+     performer starts ~15 s after the stage frees / the last action.
+   - A3/A5 cushions: 0.40 m diameter, 0.01 m thick (A5 replaces A3's
+     0.05 m). See the seats block above; seated rest = SEAT_REST_Y.
+   - A4/A8/A9 departures: distance-aware, staggered — each performer's
+     DEPARTURE is scheduled so they ARRIVE at the bow point ~15 s
+     after the previous performer's ARRIVAL (A8 restates A4; A4's
+     "15 s after the sequence ends" phrasing is superseded by A8's
+     arrival-to-arrival reading + A11's handover rule, which only
+     works if the successor arrives DURING the current wait — with a
+     15 s stage block, arrival spacing ~15 s is the only reading
+     under which the handover rule means anything). Far seats rise
+     1-2 turns early (A9); walk speed NEVER rises.
+   - A6/A10/A11 stage: compressed demo-only sequence — single bow
+     ~3 s, draw ~2 s, WAIT 10 s (A11 replaces A10's 5 s rest). Stage
+     block ~15 s. Real guests keep their full choreography (3 bows,
+     anchor walk, sit-still draw, return).
+   - A6/A7 fortune: the drawn fortune stays displayed up to 2 min,
+     decoupled from the actor (see showFortune above).
+   - A12 rising wave: during one stage block, the next 2-3 turns'
+     performers rise one by one, staggered, each on their own
+     distance-based departure — never synchronized.
+   - A13 fade-out return: after the wait, the performer walks back
+     and FADES OUT near the seat (~1-2 s), is re-seated while
+     transparent, then fades back in — no pop, no teleport.
 
-   TEST OVERRIDE (never shipped shortened): load the room with
-   ?demotest=1 to use a 3 s idle threshold and 5–8 s ambient gaps.
-   window.PhongLive.__demoNow() / __ambientNow() run one of each on
-   demand; __demoState() reports the scheduler state. The delivered
-   default stays ~5 min idle / 1–2 min ambient. */
-const DEMO_IDLE_MS = 5 * 60 * 1000;      /* ~5 min of no real guest action */
-const DEMO_CHECK_MS = 5000;              /* scheduler tick */
-const DEMO_QUEUE_WAIT_MS = 120000;       /* max a real raLay waits for a demo */
-const AMBIENT_MIN_MS = 60 * 1000;        /* one gentle move every 1–2 min */
-const AMBIENT_MAX_MS = 120 * 1000;
+   PIPELINE (how it works):
+   - A planner (demoTick, 1 s) keeps DEMO_PLAN_AHEAD = 4 turns
+     planned: each entry has riseAt / arriveAt, computed from the
+     previous arrival + 15 s minus that actor's own walk time.
+     Rotation goes through the seated fakes in seat order (front rows
+     first, so the wave reads across the hall); far seats are never
+     skipped — if a seat still cannot make ~15 s even with a 1-2 turn
+     head start, its gap is stretched and the stretch is logged
+     (A8 remedy 2).
+   - A turn: rise (standUp) -> walk out (demo route: rows 1-2 take the
+     direct diagonal to the bow point, rows 3-7 take the proven
+     doRaLay route) -> arrive -> wait for the stage (FIFO, single
+     occupancy) -> stage block: single bow, draw (board updates),
+     wait 10 s for the successor -> walk back with fade-out near the
+     seat -> re-seat transparently -> fade in.
+   - Real commands always win: a real raLay arriving while demo turns
+     are in flight is QUEUED in runCommand until the in-flight turns
+     drain (bounded 120 s), then runs normally; no new demo turn
+     starts while a real command waits (demoHold) or within 15 s of
+     any real guest action (the idle clock). thienNhom pauses demo
+     starts; on resume the departures are recomputed from the
+     current stage state.
+   - Ambient (30-45 s, still no idle-clock reset) is unchanged in
+     spirit; it never picks a demo-planned actor.
+
+   TEST OVERRIDE (never shipped shortened): ?demotest=1 uses a 3 s
+   idle threshold and 5-8 s ambient gaps (the 15 s pipeline cadence
+   is the same in test mode). ?demooff=1 makes the scheduler inert.
+   window.PhongLive.__demoNow() starts the pipeline now;
+   __ambientNow() runs one ambient cycle; __demoState() reports the
+   scheduler; __demoLog() returns the timing log; __demoPlan() the
+   current plan; __demoForceNext(code) forces the next rotation pick
+   (test-only, to reach a far seat quickly). */
+const DEMO_IDLE_MS = 15 * 1000;        /* A2: ~15 s of no real guest action */
+const DEMO_CHECK_MS = 1000;            /* planner tick — the 15 s cadence needs 1 s resolution */
+const DEMO_QUEUE_WAIT_MS = 120000;     /* max a real raLay waits for demo turns to drain */
+const DEMO_TURN_GAP_MS = 15 * 1000;    /* A2/A8: target bow-point arrival spacing */
+const DEMO_WAIT_MS = 10 * 1000;        /* A11: 10 s wait at the stage after the draw */
+const DEMO_DRAW_MS = 2000;             /* A11: 2 s draw */
+const DEMO_FADE_MS = 1500;             /* A13: fade ~1-2 s */
+const DEMO_PLAN_AHEAD = 4;             /* A9: lookahead so far seats rise 1-2 turns early */
+const DEMO_STAND_MARGIN_MS = 1000;     /* stand-up margin in the walk-time estimate */
+const DEMO_HANDOVER_EXTRA_MS = 15000;  /* max extra wait for a late successor */
+const AMBIENT_MIN_MS = 30 * 1000;      /* body: one gentle move every 30-45 s */
+const AMBIENT_MAX_MS = 45 * 1000;
 const DEMO_TEST = new URLSearchParams(location.search).has('demotest');
 const DEMO_OFF = new URLSearchParams(location.search).has('demooff'); /* test/verify aid: scheduler inert */
-const DEMO_IDLE_TEST_MS = 3000;          /* test only: demo after 3 s idle */
-const AMBIENT_TEST_MIN_MS = 5000;        /* test only: ambient every 5–8 s */
+const DEMO_IDLE_TEST_MS = 3000;        /* test only: pipeline starts after 3 s idle */
+const AMBIENT_TEST_MIN_MS = 5000;      /* test only: ambient every 5-8 s */
 const AMBIENT_TEST_MAX_MS = 8000;
-let lastGuestActionAt = Date.now();      /* real guest-action commands reset this */
-let demoActive = false;                  /* a demo holds the mat right now */
-let demoActorName = null;                /* name of the actor doing the demo */
-let demoDonePromise = null;              /* resolves when the current demo ends */
-let demoDoneResolve = null;
-let ambientActorName = null;             /* name of the actor in an ambient cycle */
-let ambientNextAt = 0;                   /* next ambient cycle time */
+let lastGuestActionAt = Date.now();    /* real guest-action commands reset this */
+let demoActive = false;                /* any demo turn in flight */
+let demoActorName = null;              /* actor currently in the stage block */
+let demoHold = false;                  /* a real command waits — no new demo turns */
+let demoActiveTurns = new Set();       /* in-flight turn promises */
+let demoPlan = [];                     /* planned turns not yet risen */
+let demoLivePlans = new Map();         /* seq -> plan (planned + in flight) */
+let demoInvolvedNames = new Set();     /* actors planned or in a turn */
+let demoForceQueue = [];               /* test-only forced next seat codes */
+let demoStageHolder = null;            /* plan in the stage block now */
+let demoStageWaiters = [];             /* plans arrived, waiting for the stage (FIFO) */
+let demoTurnSeq = 0;
+let demoNextArriveAt = 0;              /* arriveAt for the next planned entry (0 = fresh chain) */
+let demoLastArrivalAt = 0;             /* last bow-point arrival (for gap logging) */
+let demoLogLines = [];                 /* timing log, exposed via __demoLog() */
+let ambientActorName = null;           /* name of the actor in an ambient cycle */
+let ambientNextAt = 0;                 /* next ambient cycle time */
 const GUEST_ACTION_CMDS = ['addPhatTu', 'removePhatTu', 'raLay', 'xinXam', 'veCho', 'thienNhom', 'ngungThien'];
-/* Eligible actors for demo / ambient: already seated fakes, idle, not
-   the one currently out bowing, not in the other mechanism. Real guests
-   are never puppeted — their names are theirs. */
-function demoCandidates() {
-  const out = [];
-  for (const s of seats) {
-    const a = s.actor;
-    if (!a || !a.isFake || a.busy || !a.seated || a.dead) continue;
-    if (nguoiDangLay === a.name) continue;
-    if (ambientActorName === a.name) continue;
-    out.push(a);
-  }
-  return out;
+/* Timing log — every rise / arrival / stage phase / completion is one
+   line, so the verifier can read the cadence off the page instead of
+   guessing from a video. Cap 500 lines. */
+function demoLog(kind, plan, extra) {
+  const line = { t: Date.now(), kind, seq: plan ? plan.seq : null, seat: plan ? plan.seat.code : null, name: plan ? plan.actor.name : null };
+  if (extra) Object.assign(line, extra);
+  demoLogLines.push(line);
+  if (demoLogLines.length > 500) demoLogLines.splice(0, demoLogLines.length - 500);
+  try { console.log('[demo37] ' + kind + (plan ? ' #' + plan.seq + ' ' + plan.seat.code + ' ' + plan.actor.name : '') + (extra ? ' ' + JSON.stringify(extra) : '')); } catch (e) {}
 }
+/* Demo walk route, seat -> bow point. Rows 1-2 (z <= -3.0) take the
+   direct diagonal to the axis approach point: it stays in front of
+   the front row (no cushion in the way) and clears the fortune
+   anchor table by ~0.5 m. Rows 3-7 take the proven doRaLay route
+   (row-gap crossing + centre axis) — a diagonal there would cut
+   across seated rows. Walk speed stays 1.0 m/s; the rhythm is met
+   by leaving earlier, never by walking faster. */
+function demoRoutePoints(seat) {
+  if (seat.z <= -3.0) return [[0, BOW_POINT.z + 1.05], [BOW_POINT.x, BOW_POINT.z]];
+  return [[seat.x, seat.z + 1.15], [0, seat.z + 1.15], [0, BOW_POINT.z + 1.05], [BOW_POINT.x, BOW_POINT.z]];
+}
+function demoRouteBackPoints(seat) {
+  if (seat.z <= -3.0) return [[0, BOW_POINT.z + 1.05], [seat.x, seat.z]];
+  return [[0, seat.z + 1.15], [seat.x, seat.z + 1.15], [seat.x, seat.z]];
+}
+function demoPathDist(seat) {
+  const pts = demoRoutePoints(seat);
+  let d = 0, px = seat.x, pz = seat.z;
+  for (const p of pts) { d += Math.hypot(p[0] - px, p[1] - pz); px = p[0]; pz = p[1]; }
+  return d;
+}
+function demoWalkMs(seat) { return (demoPathDist(seat) / GIRL_WALK_SPEED) * 1000 + DEMO_STAND_MARGIN_MS; }
+/* Fade an actor's opacity (A13). Materials are already cloned per
+   actor in makeActor, so fading one never touches the others. The
+   tag sprite fades with the body. Shadows go off while fading (a
+   solid shadow under a fading body reads wrong) and come back after
+   the fade-in. */
+function fadeActor(actor, from, to, durMs) {
+  const mats = [];
+  actor.group.traverse((o) => {
+    if ((o.isMesh || o.isSprite) && o.material) {
+      const m = o.material;
+      if (m.userData.__fadeSaved === undefined) { m.userData.__fadeSaved = true; m.userData.__fadeTransparent = !!m.transparent; m.userData.__fadeOpacity = (m.opacity === undefined ? 1 : m.opacity); }
+      m.transparent = true;
+      mats.push(m);
+    }
+  });
+  actor.group.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+  return tween(durMs / 1000, (e) => {
+    const v = lerp(from, to, e);
+    for (const m of mats) m.opacity = v;
+  }).then(() => {
+    if (to === 1) {
+      for (const m of mats) { m.transparent = m.userData.__fadeTransparent; m.opacity = m.userData.__fadeOpacity; }
+      actor.group.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+    }
+  });
+}
+
+/* Eligible for a demo turn: a seated fake, idle, not the one out
+   bowing, not in an ambient cycle, not already planned / in a turn.
+   Real guests are never puppeted — their names are theirs. */
+function demoEligibleActor(seat) {
+  const a = seat.actor;
+  if (!a || !a.isFake || a.busy || !a.seated || a.dead) return null;
+  if (nguoiDangLay === a.name) return null;
+  if (ambientActorName === a.name) return null;
+  if (demoInvolvedNames.has(a.name)) return null;
+  return a;
+}
+/* v0.1.37 (#64 follow-up, Trang 2026-11-21 14:16): NEAREST seat first.
+   The v0.1.36 rotation went through the seats in order (front rows
+   first, then the far rows) — so a far seat regularly held a turn and
+   the pipeline carried up to 4 long walks at once. Now the planner
+   prefers the NEAREST eligible seat (shortest demo path to the bow
+   point), so most turns are ~20 s and the pipeline drains fast.
+   Fairness: a seat is not picked again within the last DEMO_RECENT_N
+   picks, so the same front seats do not monopolise the stage; when
+   every eligible seat is recent, the oldest half ages out and the
+   nearest of the rest is picked. Far seats still get turns — just
+   less often, always with the distance-aware early departure (A8/A9).
+   Test-only forced picks (demoForceQueue) go first and also count as
+   recent, so the fairness invariant (no repeat within 6 picks) holds
+   for every pick the verifier can read off the log. */
+const DEMO_RECENT_N = 6;                 /* fairness window: no repeat within the last 6 picks */
+let demoRecentSeats = [];                /* seat codes, most recent last */
+function demoNextSeat() {
+  while (demoForceQueue.length) {
+    const code = demoForceQueue.shift();
+    const seat = seats.find((s) => s.code === code);
+    if (seat && demoEligibleActor(seat)) {
+      demoRecentSeats.push(seat.code);
+      if (demoRecentSeats.length > DEMO_RECENT_N) demoRecentSeats.shift();
+      return seat;
+    }
+  }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let best = null, bestDist = Infinity;
+    for (const seat of seats) {
+      if (demoRecentSeats.includes(seat.code)) continue;
+      if (!demoEligibleActor(seat)) continue;
+      const d = demoPathDist(seat);
+      if (d < bestDist || (d === bestDist && best && seats.indexOf(seat) < seats.indexOf(best))) { bestDist = d; best = seat; }
+    }
+    if (best) {
+      demoRecentSeats.push(best.code);
+      if (demoRecentSeats.length > DEMO_RECENT_N) demoRecentSeats.shift();
+      return best;
+    }
+    if (!demoRecentSeats.length) return null;
+    demoRecentSeats.splice(0, Math.ceil(demoRecentSeats.length / 2));
+  }
+  return null;
+}
+function demoCanPlan() {
+  if (DEMO_OFF || deepMeditation || demoHold) return false;
+  const idleMs = DEMO_TEST ? DEMO_IDLE_TEST_MS : DEMO_IDLE_MS;
+  if (Date.now() - lastGuestActionAt < idleMs) return false;
+  if (nguoiDangLay && demoActorName !== nguoiDangLay) return false; /* a REAL guest holds the mat */
+  return true;
+}
+/* Keep DEMO_PLAN_AHEAD turns planned. Each entry's arrival is the
+   previous arrival + 15 s; its rise is the arrival minus its own
+   walk time — so far seats rise during earlier turns (A8/A9). If the
+   chain is fresh (first turn, or after a pause), the first entry
+   rises immediately and arrives after its own walk. */
+function demoPlanEnsure() {
+  if (!demoCanPlan()) return;
+  while (demoPlan.length < DEMO_PLAN_AHEAD) {
+    const seat = demoNextSeat();
+    if (!seat) break;
+    const now = Date.now();
+    const walkMs = demoWalkMs(seat);
+    let arriveAt, riseAt;
+    if (demoNextArriveAt > now) {
+      arriveAt = demoNextArriveAt;
+      riseAt = arriveAt - walkMs;
+    } else {
+      riseAt = now;
+      arriveAt = now + walkMs;
+    }
+    demoNextArriveAt = arriveAt + DEMO_TURN_GAP_MS;
+    const plan = {
+      seq: ++demoTurnSeq, actor: seat.actor, seat, riseAt, arriveAt, state: 'planned',
+      walkMs: Math.round(walkMs), distM: Math.round(demoPathDist(seat) * 10) / 10,
+      remedy: walkMs > DEMO_TURN_GAP_MS ? 'early-departure' : 'on-time',
+      claimedBy: null,               /* v0.1.37: set by demoDoSwap — { guestName, guestActor, fakeName, claimedAt } */
+      realHeld: false,               /* v0.1.37: true once the claimed turn holds the stage as a real guest */
+    };
+    demoInvolvedNames.add(plan.actor.name);
+    demoLivePlans.set(plan.seq, plan);
+    demoPlan.push(plan);
+    demoLog('plan', plan, { riseInS: Math.round((riseAt - now) / 1000), arriveInS: Math.round((arriveAt - now) / 1000), walkS: Math.round(walkMs / 1000), distM: plan.distM, remedy: plan.remedy });
+  }
+}
+function demoPlanStillValid(plan) {
+  const a = plan.actor;
+  return a && !a.dead && a.seat === plan.seat && plan.seat.actor === a && a.seated && !a.busy;
+}
+function demoPlanStartDue() {
+  if (!demoCanPlan()) return;
+  const now = Date.now();
+  const due = demoPlan.filter((p) => p.riseAt <= now).sort((a, b) => a.riseAt - b.riseAt);
+  for (const plan of due) {
+    const i = demoPlan.indexOf(plan);
+    if (i >= 0) demoPlan.splice(i, 1);
+    if (!demoPlanStillValid(plan)) {
+      demoInvolvedNames.delete(plan.actor.name);
+      demoLivePlans.delete(plan.seq);
+      demoLog('drop', plan, { reason: 'stale' });
+      continue;
+    }
+    demoStartTurn(plan);
+  }
+}
+function demoStartTurn(plan) {
+  plan.state = 'starting';
+  plan.riseStartedAt = Date.now();
+  demoActive = true;
+  const p = runDemoTurn(plan);
+  plan.promise = p;
+  demoActiveTurns.add(p);
+  p.then(() => { demoActiveTurns.delete(p); demoRefreshActive(); }, () => { demoActiveTurns.delete(p); demoRefreshActive(); });
+}
+function demoRefreshActive() { demoActive = demoActiveTurns.size > 0; }
+/* v0.1.37: wait until the stage is free of ANY holder (demo turn or
+   real guest) — the fallback path only (see demoClaimForRealGuest).
+   The swap path never waits on this. */
+function demoWaitStageFree() {
+  return new Promise((res) => {
+    const check = () => {
+      if (!demoStageHolder && !nguoiDangLay) res();
+      else setTimeout(check, 500);
+    };
+    check();
+  });
+}
+/* v0.1.37 NAME-SWAP QUEUE (Trang 2026-11-21 14:24 + 14:26 + 14:28).
+   Find the best in-flight demo performer to become a real guest:
+   still walking in (rising / walking / arrived — NOT yet bowing),
+   not already claimed, and NEAREST to the bow point, where the bower
+   stands. The bower themself (state 'stage') is never a candidate:
+   fake or real, A always finishes. Distance is the actor's CURRENT
+   position to the bow point — the one about to take over is usually
+   a few metres away. Returns { plan, distM, bowerName } or null. */
+function demoClaimCandidate() {
+  const bower = demoStageHolder;
+  let best = null, bestDist = Infinity;
+  for (const p of demoLivePlans.values()) {
+    if (p.claimedBy) continue;
+    if (p.state !== 'rising' && p.state !== 'walking' && p.state !== 'arrived' && p.state !== 'starting') continue;
+    if (bower && p === bower) continue; /* belt-and-braces: the bower is never swapped (state 'stage' already excluded) */
+    const d = p.actor.group.position.distanceTo(BOW_POINT);
+    if (d < bestDist) { bestDist = d; best = p; }
+  }
+  if (!best) return null;
+  return { plan: best, distM: Math.round(bestDist * 10) / 10, bowerName: bower ? bower.actor.name : null };
+}
+/* v0.1.37: perform the name swap (SYNCHRONOUS — find + mark is one
+   step, so two real guests arriving together can never claim the same
+   performer). The chosen performer takes the REAL guest's name; the
+   seated real-guest actor takes the performer's FAKE name and stays
+   put. Bodies and seats do not move — the NAMES swap seats. The
+   actors map is rebuilt (it is keyed by name), the tags are redrawn
+   in place, and the fake/real flags flip, so every later command
+   addressed by name finds the right body and the demo scheduler
+   treats the seated fake-named actor as an ordinary fake. */
+function demoDoSwap(plan, guestName) {
+  const guest = actors.get(String(guestName || '').trim());
+  if (!guest) return null;
+  const perf = plan.actor;
+  const fakeName = perf.name, realName = guest.name;
+  const bowerName = demoStageHolder ? demoStageHolder.actor.name : null;
+  perf.name = realName; perf.isFake = false;
+  guest.name = fakeName; guest.isFake = true;
+  actors.delete(fakeName); actors.delete(realName);
+  actors.set(realName, perf);
+  actors.set(fakeName, guest);
+  renameActorTag(perf, realName);
+  renameActorTag(guest, fakeName);
+  /* the performer stays involved under the NEW (real) name; the old
+     fake name must leave the set, or the seated actor (now
+     fake-named) would never be picked by the planner again. */
+  demoInvolvedNames.delete(fakeName);
+  demoInvolvedNames.add(realName);
+  plan.claimedBy = { guestName: realName, guestActor: guest, fakeName, claimedAt: Date.now() };
+  demoLog('swap', plan, { seat: plan.seat.code, fakeName, realName, guestSeat: guest.seat ? guest.seat.code : null, distToBowM: Math.round(perf.group.position.distanceTo(BOW_POINT) * 10) / 10, bowerName, bowerUnchanged: true });
+  return plan;
+}
+/* v0.1.37: poll until an unclaimed walking performer exists (the next
+   rise), bounded — the edge-case wait in demoClaimForRealGuest. */
+function demoWaitForClaimable(timeoutMs) {
+  return new Promise((res) => {
+    const t0 = Date.now();
+    const check = () => {
+      const cand = demoClaimCandidate();
+      if (cand) return res(cand);
+      if (Date.now() - t0 >= timeoutMs) return res(null);
+      setTimeout(check, 500);
+    };
+    check();
+  });
+}
+/* v0.1.37: claim the nearest walking performer for a real guest.
+   Tries an immediate swap; if no performer is claimable (only the
+   bower is in flight), waits for the next performer to rise
+   (bounded 25 s) and swaps onto them. Returns the claimed plan —
+   its promise resolves with the real raLay result {ok:true} once
+   the renamed performer has bowed 3 times — or null, in which case
+   the caller falls back to the normal path (guest walks from their
+   own seat). The path taken is logged for the test report. */
+async function demoClaimForRealGuest(guestName) {
+  const guest = actors.get(String(guestName || '').trim());
+  if (!guest || !guest.seated || guest.busy) return null;
+  let cand = demoClaimCandidate();
+  if (cand) {
+    demoDoSwap(cand.plan, guestName);
+    demoLog('claim', cand.plan, { path: 'swap-immediate', distM: cand.distM, bowerName: cand.bowerName });
+    return cand.plan;
+  }
+  demoLog('claim-wait', null, { reason: 'no-eligible-performer', guest: guestName });
+  const found = await demoWaitForClaimable(25000);
+  if (found) {
+    demoDoSwap(found.plan, guestName);
+    demoLog('claim', found.plan, { path: 'swap-next-rise', distM: found.distM, bowerName: found.bowerName });
+    return found.plan;
+  }
+  demoLog('claim-fallback', null, { reason: 'no-rise-in-25s', guest: guestName });
+  return null;
+}
+/* v0.1.37: release the demo stage hold when a real guest who took the
+   stage via a claimed demo turn leaves the bow point (veCho / xinXam
+   completion). A no-op for ordinary real guests (doRaLay never sets
+   demoStageHolder) and for demo turns (their own finally releases). */
+function demoReleaseRealStage(actor) {
+  if (demoStageHolder && demoStageHolder.actor === actor) {
+    demoStageHolder = null;
+    demoStageMaybeAdvance();
+  }
+}
+/* Stage gate (FIFO, single occupancy): an arrived performer waits
+   here until the stage is free AND they are first in line. */
+function demoStageGate(plan) {
+  return new Promise((res) => {
+    plan.stageGateResolve = res;
+    demoStageMaybeAdvance();
+  });
+}
+function demoStageMaybeAdvance() {
+  if (demoStageHolder) return;
+  /* v0.1.37: a CLAIMED turn (a real guest) jumps the gate queue. The
+     real guest waits only for the current bower to finish — never for
+     the demo turns queued behind them. Without this, correct
+     serialization (grant-time claim, no race) makes the guest wait
+     behind every queued demo turn: the re-test measured a 50 s bow
+     start (146 s worst case, 8 demo turns ahead) against the ~20 s
+     target. The demo turns are fake; the real guest takes priority
+     (standing rule: real commands always win). Among claimed
+     waiters, FIFO — guest 2 waits behind guest 1. */
+  let idx = demoStageWaiters.findIndex((p) => p.claimedBy && p.stageGateResolve);
+  if (idx < 0) idx = 0;
+  const next = demoStageWaiters[idx];
+  if (!next || !next.stageGateResolve) return;
+  demoStageWaiters.splice(idx, 1);
+  /* v0.1.37 (gate-race fix, found by self-test 2026-11-21): the stage is
+     CLAIMED here, synchronously at grant time — before the waiter's
+     promise resolves. The old code only set demoStageHolder after the
+     granted turn walked its final 1.05 m step (~1 s later), so a second
+     demoStageMaybeAdvance in that window (a new arrival at the gate,
+     or a turn's finally) granted the NEXT waiter too, and two
+     performers stood at the bow point at once. The partner's
+     stage-end then cleared nguoiDangLay under the real guest, whose
+     xinXam / veCho guard failed and stranded them. The turn's
+     stage-entry assignment below re-asserts the same value. */
+  demoStageHolder = next;
+  const r = next.stageGateResolve; next.stageGateResolve = null;
+  r();
+}
+function demoSuccessor(plan) {
+  let best = null;
+  for (const p of demoLivePlans.values()) {
+    if (p.seq > plan.seq && (!best || p.seq < best.seq)) best = p;
+  }
+  return best;
+}
+/* A11 handover: the performer waits ~10 s at the stage AND does not
+   walk back before the successor has arrived at the stage area.
+   If the successor is late, the wait stretches (max +15 s) and the
+   stretch is logged — never silently. A real command (demoHold) or
+   group meditation ends the wait at once. */
+async function demoWaitHandover(plan) {
+  const waitEnd = plan.waitStart + DEMO_WAIT_MS;
+  while (true) {
+    const now = Date.now();
+    if (now >= waitEnd) {
+      const succ = demoSuccessor(plan);
+      if (!succ || succ.state === 'arrived' || succ.state === 'stage' || demoHold || deepMeditation) return;
+      if (now - waitEnd > DEMO_HANDOVER_EXTRA_MS) {
+        demoLog('wait-stretch', plan, { extraS: Math.round((now - waitEnd) / 1000), succSeat: succ.seat.code, succState: succ.state });
+        return;
+      }
+    }
+    await tween(0.5, () => {});
+  }
+}
+/* Split a return path into a full-opacity head and a fading tail
+   (the last ~2 m before the seat). Returns {head, tail, tailLen}. */
+function demoSplitReturn(from, points, fadeDist) {
+  const full = [[from[0], from[1]], ...points];
+  const segLen = [];
+  let total = 0;
+  for (let i = 1; i < full.length; i++) {
+    const d = Math.hypot(full[i][0] - full[i - 1][0], full[i][1] - full[i - 1][1]);
+    segLen.push(d); total += d;
+  }
+  const fadeAt = Math.max(0.5, total - fadeDist);
+  let acc = 0, fi = 0, fp = null;
+  for (let i = 0; i < segLen.length; i++) {
+    if (acc + segLen[i] >= fadeAt) {
+      const t = segLen[i] === 0 ? 0 : (fadeAt - acc) / segLen[i];
+      fp = [full[i][0] + (full[i + 1][0] - full[i][0]) * t, full[i][1] + (full[i + 1][1] - full[i][1]) * t];
+      fi = i; break;
+    }
+    acc += segLen[i];
+  }
+  if (!fp) { fp = full[full.length - 1]; fi = segLen.length - 1; }
+  const head = full.slice(1, fi + 1).concat([fp]);
+  const tail = [fp].concat(full.slice(fi + 1));
+  return { head, tail, tailLen: Math.max(0, total - fadeAt) };
+}
+/* A13 return: walk back, fade out over the last ~2 m near the seat,
+   re-seat while transparent, fade back in. No sit-back snap, no pop,
+   no teleport anywhere on the return path. */
+async function demoWalkBack(plan) {
+  const actor = plan.actor, seat = plan.seat;
+  plan.state = 'returning';
+  const from = [actor.group.position.x, actor.group.position.z];
+  const sp = demoSplitReturn(from, demoRouteBackPoints(seat), 2.0);
+  if (sp.head.length) await walkPath(actor, sp.head);
+  await Promise.all([
+    walkPath(actor, sp.tail),
+    fadeActor(actor, 1, 0, Math.max(1000, Math.min(2000, (sp.tailLen / GIRL_WALK_SPEED) * 1000))),
+  ]);
+  actor.group.position.set(seat.x, SEAT_REST_Y, seat.z);
+  await faceToward(actor, 0, -1, 0.4);
+  actor.seated = false;
+  await Promise.all([sitDown(actor), fadeActor(actor, 0, 1, DEMO_FADE_MS)]);
+  actor.seated = true;
+}
+/* One demo turn: rise -> walk out -> arrive -> stage (single bow,
+   draw, 10 s wait) -> walk back with fade -> re-seat with fade-in.
+   Real guests keep their full choreography (doRaLay/doXinXam) — this
+   compressed stage sequence is demo-only (A6/A11). */
+async function runDemoTurn(plan) {
+  const actor = plan.actor, seat = plan.seat;
+  try {
+    plan.state = 'rising';
+    actor.busy = true;
+    demoLog('rise', plan, { walkS: Math.round(demoWalkMs(seat) / 1000), distM: plan.distM });
+    actor.group.position.y = 0;
+    await standUp(actor);
+    plan.state = 'walking';
+    plan.walkStart = Date.now();
+    /* Walk to the carpet-edge approach point [0, BOW_POINT.z + 1.05]
+       and WAIT there (A4: an arriving actor waits at the carpet edge
+       if the stage is not free). The final 1.05 m step onto the bow
+       point happens ONLY after the stage gate opens — otherwise the
+       waiter would stand on top of the performer who is bowing
+       (both at the exact bow point for the ~1-3 s the stage block
+       outlasts the ~15 s arrival gap). The approach point is the
+       first point of demoRouteBackPoints, so a gate-cancelled turn
+       walks back from exactly here. */
+    const demoPts = demoRoutePoints(seat);
+    await walkPath(actor, demoPts.slice(0, -1));
+    plan.state = 'arrived';
+    plan.arrivedAt = Date.now();
+    const gapS = demoLastArrivalAt ? Math.round((plan.arrivedAt - demoLastArrivalAt) / 1000) : null;
+    const stretched = gapS !== null && gapS > DEMO_TURN_GAP_MS / 1000 + 5;
+    demoLastArrivalAt = plan.arrivedAt;
+    demoLog('arrive', plan, { gapPrevS: gapS, walkS: Math.round((plan.arrivedAt - plan.walkStart) / 1000), remedy: stretched ? 'stretched' : plan.remedy });
+    demoStageWaiters.push(plan);
+    await demoStageGate(plan);
+    /* v0.1.37: a CLAIMED turn never cancels at the gate — it IS the
+       real guest, and the guest is waiting. (demoHold / thienNhom
+       still cancel ordinary demo turns.) */
+    if (!plan.claimedBy && (demoHold || deepMeditation)) {
+      demoLog('cancel', plan, { at: 'stage-gate' });
+      await demoWalkBack(plan);
+      return;
+    }
+    await walkPath(actor, demoPts.slice(-1)); /* final step onto the bow point */
+    /* stage block — single occupancy; the mat is booked */
+    demoStageHolder = plan;
+    /* v0.1.37: a CLAIMED turn is a real guest now — demoActorName stays
+       unset, so demoCanPlan() keeps blocking new planning while the
+       real guest holds the mat (a demo turn sets it to its own name). */
+    if (!plan.claimedBy) demoActorName = actor.name;
+    nguoiDangLay = actor.name;
+    actor.out = 'dang lay';
+    plan.state = 'stage';
+    plan.stageStart = Date.now();
+    demoLog('stage', plan, {});
+    if (plan.claimedBy) {
+      /* v0.1.37: NAME-SWAP QUEUE — this turn was claimed by a real
+         guest. The performer is already at the bow point under the
+         REAL name: perform the REAL raLay sequence (3 bows, the real
+         choreography — NOT the demo's single bow), then wait at the
+         bow point ('dang cho') for xinXam / veCho exactly as doRaLay
+         leaves a real guest. The stage/mat stay held by the real
+         guest (plan.realHeld) — the finally below must NOT release
+         them; doVeCho / doXinXam release the stage via
+         demoReleaseRealStage when the guest leaves. No demo draw,
+         no 10 s wait, no fortune from this turn — the real guest's
+         fortune comes from their own xinXam. */
+      for (let i = 0; i < 3; i++) await playBow(actor);
+      actor.out = 'dang cho';
+      plan.realHeld = true;
+      demoLog('real-bow', plan, { guest: actor.name, bowS: Math.round((Date.now() - plan.stageStart) / 1000) });
+      return { ok: true };
+    }
+    await playBow(actor); /* single bow (~4 s at timescale 1.5) */
+    plan.bowEnd = Date.now();
+    demoLog('bow', plan, { bowS: Math.round((plan.bowEnd - plan.stageStart) / 1000) });
+    /* draw (2 s): the fortune goes on the board (showFortune — it
+       persists up to 2 min, decoupled from this actor). The demo draw
+       is a stage draw at the bow point: no anchor walk (the real
+       guest choreography still walks to the anchor). */
+    const que = window.XAM_DATA[Math.floor(Math.random() * window.XAM_DATA.length)];
+    showFortune(que);
+    lastQue = { soQue: que[0], tenQue: que[1], nguoi: actor.name };
+    plan.que = que[0];
+    await tween(DEMO_DRAW_MS / 1000, () => {});
+    plan.drawEnd = Date.now();
+    demoLog('draw', plan, { que: que[0], drawS: Math.round((plan.drawEnd - plan.bowEnd) / 1000) });
+    /* wait 10 s at the stage, facing the hall, while the successor
+       walks in — the fortune is up and the audience reads it */
+    plan.waitStart = Date.now();
+    await faceToward(actor, 0, 1, 0.4);
+    await demoWaitHandover(plan);
+    plan.waitEnd = Date.now();
+    demoLog('wait', plan, { waitS: Math.round((plan.waitEnd - plan.waitStart) / 1000) });
+    /* free the stage BEFORE walking back (the successor takes it).
+       v0.1.37 (gate-race fix): clear ONLY what this turn still holds —
+       the old unconditional clears could wipe the mat under a real
+       guest who had staged in the meantime. With the synchronous
+       grant above this cannot happen, but the guards make the
+       stage-end idempotent either way. */
+    if (nguoiDangLay === actor.name) nguoiDangLay = null;
+    actor.out = null;
+    if (demoActorName === actor.name) demoActorName = null;
+    if (demoStageHolder === plan) { demoStageHolder = null; demoStageMaybeAdvance(); }
+    plan.state = 'returning';
+    await demoWalkBack(plan);
+  } catch (e) {
+    try { console.log('[demo37] turn #' + plan.seq + ' error: ' + String(e).slice(0, 200)); } catch (_) {}
+  } finally {
+    /* never leave the stage booked, the mat held, or the actor stranded —
+       UNLESS this turn converted to a real guest sequence (plan.realHeld):
+       then the real guest still holds the stage/mat/out, and only the
+       demo bookkeeping below is cleared; veCho / xinXam release the
+       stage via demoReleaseRealStage when the guest leaves. */
+    if (!plan.realHeld) {
+      if (demoStageHolder === plan) { demoStageHolder = null; demoStageMaybeAdvance(); }
+      if (nguoiDangLay === actor.name) nguoiDangLay = null;
+      if (actor.out) actor.out = null;
+      if (demoActorName === actor.name) demoActorName = null;
+    }
+    const wi = demoStageWaiters.indexOf(plan);
+    if (wi >= 0) demoStageWaiters.splice(wi, 1);
+    demoInvolvedNames.delete(actor.name);
+    demoLivePlans.delete(plan.seq);
+    plan.state = 'done';
+    const doneExtra = { turnS: plan.riseStartedAt ? Math.round((Date.now() - plan.riseStartedAt) / 1000) : null };
+    if (plan.realHeld) doneExtra.realGuest = actor.name;
+    demoLog('done', plan, doneExtra);
+    actor.busy = false;
+    demoRefreshActive();
+  }
+}
+/* Test hook: start the pipeline now (the planner then keeps chaining
+   while the room stays idle). */
+function runDemo() {
+  if (DEMO_OFF || deepMeditation) return { ok: false, loi: 'tam dung' };
+  lastGuestActionAt = Date.now() - (DEMO_TEST ? DEMO_IDLE_TEST_MS : DEMO_IDLE_MS);
+  demoPlanEnsure();
+  demoPlanStartDue();
+  return { ok: true, plan: demoPlan.length };
+}
+/* One ambient cycle at the actor's own seat — never the carpet. Two
+   gentle variants, picked at random: stand -> bow once -> sit, or
+   stand a while -> sit. Uses only standUp / playBow / sitDown. */
 function ambientCandidates() {
   const out = [];
   for (const s of seats) {
     const a = s.actor;
     if (!a || !a.isFake || a.busy || !a.seated || a.dead) continue;
     if (nguoiDangLay === a.name) continue;
-    if (demoActive && demoActorName === a.name) continue;
+    if (demoInvolvedNames.has(a.name)) continue;
     if (ambientActorName === a.name) continue;
     out.push(a);
   }
   return out;
 }
-/* The featured demo: the full guest sequence via the EXISTING public
-   functions — doRaLay then doXinXam — so the demo walks, bows and
-   draws exactly like a real guest. Returns {ok} / {ok:false, loi}. */
-async function runDemo() {
-  if (demoActive || nguoiDangLay || deepMeditation) return { ok: false, loi: 'dang ban' };
-  const cands = demoCandidates();
-  if (!cands.length) { lastGuestActionAt = Date.now(); return { ok: false, loi: 'khong co dien vien' }; }
-  const actor = cands[Math.floor(Math.random() * cands.length)];
-  demoActive = true; demoActorName = actor.name;
-  demoDonePromise = new Promise((res) => { demoDoneResolve = res; });
-  try {
-    const r1 = await doRaLay(actor.name);
-    if (!r1.ok) return { ok: false, loi: r1.loi }; /* a real raLay won the race */
-    const r2 = await doXinXam(actor.name);
-    if (r2 && r2.ok === false) return { ok: false, loi: r2.loi };
-    return { ok: true, ten: actor.name, que: r2 ? r2.soQue : null };
-  } finally {
-    demoActive = false; demoActorName = null;
-    lastGuestActionAt = Date.now(); /* demo counts as activity — next demo ≥5 min later */
-    if (demoDoneResolve) demoDoneResolve();
-    demoDonePromise = null; demoDoneResolve = null;
-  }
-}
-/* One ambient cycle at the actor's own seat — never the carpet. Two
-   gentle variants, picked at random: stand -> bow once -> sit, or
-   stand a while -> sit. Uses only standUp / playBow / sitDown. */
 async function runAmbient() {
   if (ambientActorName || deepMeditation) return { ok: false, loi: 'dang ban' };
   const cands = ambientCandidates();
@@ -1422,11 +2106,11 @@ async function runAmbient() {
   ambientActorName = actor.name; actor.busy = true;
   const variant = Math.random() < 0.5 ? 'bow' : 'stand';
   try {
-    actor.group.position.y = 0; /* seated actors rest at y 0.16 (cushion) — feet on the floor to stand */
+    actor.group.position.y = 0; /* seated actors rest at SEAT_REST_Y (pad top) — feet on the floor to stand */
     await standUp(actor);
     if (variant === 'bow') await playBow(actor);
     else await tween(3, () => {});
-    actor.group.position.y = 0.16;
+    actor.group.position.y = SEAT_REST_Y;
     await sitDown(actor);
     return { ok: true, ten: actor.name, kieu: variant };
   } finally {
@@ -1445,11 +2129,21 @@ function ambientDelayMs() {
 }
 function demoTick() {
   if (DEMO_OFF) return; /* scheduler inert (?demooff=1) — base verification runs undisturbed */
-  const now = Date.now();
-  const idleMs = DEMO_TEST ? DEMO_IDLE_TEST_MS : DEMO_IDLE_MS;
-  if (!demoActive && !nguoiDangLay && !deepMeditation && now - lastGuestActionAt >= idleMs) {
-    runDemo().catch(() => {});
+  if (deepMeditation) {
+    /* thienNhom pauses demo starts (A4): drop unstarted plans, keep
+       in-flight turns finishing; on resume the departures are
+       recomputed from the current stage state (fresh chain). */
+    if (demoPlan.length) {
+      for (const p of demoPlan) { demoInvolvedNames.delete(p.actor.name); demoLivePlans.delete(p.seq); }
+      demoPlan = [];
+      demoNextArriveAt = 0;
+      demoLog('pipeline-pause', null, { reason: 'thienNhom' });
+    }
+  } else {
+    demoPlanEnsure();
+    demoPlanStartDue();
   }
+  const now = Date.now();
   if (!ambientNextAt) ambientNextAt = now + ambientDelayMs();
   if (now >= ambientNextAt && !ambientActorName && !deepMeditation) {
     /* runAmbient's finally schedules the NEXT cycle (gap from cycle end) */
@@ -1463,6 +2157,9 @@ function demoState() {
     idleMs: Date.now() - lastGuestActionAt,
     demoIdleMs: DEMO_TEST ? DEMO_IDLE_TEST_MS : DEMO_IDLE_MS,
     testMode: DEMO_TEST,
+    plan: demoPlan.map((p) => ({ seq: p.seq, seat: p.seat.code, riseInS: Math.round((p.riseAt - Date.now()) / 1000), arriveInS: Math.round((p.arriveAt - Date.now()) / 1000) })),
+    stage: demoStageHolder ? demoStageHolder.seat.code : null,
+    logLines: demoLogLines.length,
   };
 }
 
@@ -2182,12 +2879,17 @@ window.PhongLive = {
      so Supabase + BroadcastChannel both carry these commands. */
   daiPhatProgramOn: (pieces, repeats) => dpDaiPhatProgramOn(pieces, repeats),
   daiPhatProgramOff: () => dpDaiPhatProgramOff(),
-  /* v0.1.35 (#62): idle demo + ambient cycle — test hooks only (no UI).
-     __demoNow runs one featured demo now; __ambientNow runs one
-     ambient cycle now; __demoState reports the scheduler state. */
+  /* v0.1.36 (#64): demo pipeline + ambient cycle — test hooks only (no UI).
+     __demoNow starts the pipeline now; __ambientNow runs one ambient
+     cycle now; __demoState reports the scheduler; __demoLog returns
+     the timing log; __demoPlan the current plan; __demoForceNext(code)
+     forces the next rotation pick (test-only). */
   __demoNow: () => runDemo(),
   __ambientNow: () => runAmbient(),
   __demoState: () => demoState(),
+  __demoLog: () => demoLogLines.slice(),
+  __demoPlan: () => demoPlan.map((p) => ({ seq: p.seq, seat: p.seat.code, state: p.state, riseAt: p.riseAt, arriveAt: p.arriveAt })),
+  __demoForceNext: (code) => { demoForceQueue.push(String(code)); return { ok: true, queued: String(code) }; },
   ready: new Promise((res) => readyCallbacks.push(res)),
 };
 /* Debug/diagnostic handle for whoever verifies the build (not a UI). */
@@ -2201,13 +2903,38 @@ async function runCommand(cmd, args) {
      clock — only REAL activity counts (the demo / ambient cycle never
      reset it, or the demo could never fire). */
   if (GUEST_ACTION_CMDS.indexOf(cmd) >= 0) lastGuestActionAt = Date.now();
-  /* v0.1.35 (#62): a real raLay arriving while a demo holds the mat
-     waits for the demo to finish (bounded), then runs normally — the
-     demo never rejects a real guest, never double-books the mat. */
-  if (cmd === 'raLay' && demoActive && demoDonePromise) {
-    try { await Promise.race([demoDonePromise, new Promise((res) => setTimeout(res, DEMO_QUEUE_WAIT_MS))]); } catch (e) {}
+  /* v0.1.37 (#64 follow-up, Trang 2026-11-21): NAME-SWAP QUEUE — a real
+     raLay arriving while demo turns are in flight NO LONGER waits for
+     the pipeline to drain (~74 s in v0.1.36). Instead the guest takes
+     over the NEAREST in-flight demo performer (already en route):
+     demoClaimForRealGuest swaps the names, the renamed performer
+     walks the remaining distance and performs the REAL 3-bow sequence,
+     and this resolves with its {ok:true} (bow starts within ~20 s).
+     The other in-flight performers keep their turns (no recall) and
+     queue behind the real guest at the carpet edge; the bower is
+     never swapped and always finishes. If no performer is claimable
+     (only the bower is in flight), the claim waits for the next rise
+     (bounded 25 s); only if no rise comes does the guest fall back
+     to the normal path — demoHold stops NEW demo turns starting
+     while the real command waits for the stage to free (bounded
+     120 s), then doRaLay runs normally from the guest's own seat.
+     demoHold clears after the command runs, and the 15 s idle clock
+     above gates the pipeline restart. */
+  let queued = false;
+  if (cmd === 'raLay' && demoActiveTurns.size > 0) {
+    queued = true;
+    const claim = await demoClaimForRealGuest(args && args[0]);
+    if (claim) {
+      /* the claimed turn performs the real sequence; its promise
+         resolves {ok:true} once the renamed performer has bowed. */
+      return await claim.promise;
+    }
+    demoHold = true;
+    try { await Promise.race([demoWaitStageFree(), new Promise((res) => setTimeout(res, DEMO_QUEUE_WAIT_MS))]); } catch (e) {}
   }
-  return api[cmd].apply(null, args || []);
+  const result = await api[cmd].apply(null, args || []);
+  if (queued) demoHold = false;
+  return result;
 }
 /* v0.1.35 (#62): debug handle for the verifier (same pattern as
    window.__plDebug above) — the exact runCommand the BC / postMessage /
@@ -2324,7 +3051,7 @@ SEED_FAKE.forEach(([si, name]) => {
   const seat = seats[si];
   const actor = makeActor(name, seat, true);
   seat.actor = actor; actors.set(name, actor);
-  actor.group.position.set(seat.x, 0.16, seat.z);
+  actor.group.position.set(seat.x, SEAT_REST_Y, seat.z);
   actor.group.rotation.y = Math.PI;
   actor.tag.position.y = TAG_Y_SEAT; actor.seated = true;
 });
